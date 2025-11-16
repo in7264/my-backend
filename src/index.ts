@@ -7,8 +7,8 @@ const app = express();
 
 app.use(
   cors({
-    origin: "*",
-    credentials: true,
+    origin: ["https://in7264.github.io", "http://localhost:5173"],
+    credentials: "include"
   })
 );
 app.use(express.json());
