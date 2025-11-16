@@ -12,7 +12,7 @@ function createSessionToken(user: any) {
     {
       id: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
     },
     process.env.JWT_SECRET!,
     { expiresIn: "7d" }
@@ -25,7 +25,7 @@ function setSessionCookie(res: any, token: string) {
     httpOnly: true,
     secure: true,
     sameSite: "none",
-    maxAge: 7 * 24 * 60 * 60 * 1000
+    maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 }
 
@@ -33,17 +33,22 @@ function setSessionCookie(res: any, token: string) {
 //       EMAIL LOGIN
 // =========================
 router.post("/login", async (req, res) => {
+  console.log(req.body);
   const { email, password } = req.body;
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
-    password
+    password,
   });
 
   if (error) return res.status(400).json({ error: error.message });
 
   // get role from profiles
-  const profile = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
+  const profile = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", data.user.id)
+    .single();
 
   const token = createSessionToken(profile.data);
   setSessionCookie(res, token);
@@ -59,7 +64,7 @@ router.post("/register", async (req, res) => {
 
   const { data, error } = await supabase.auth.signUp({
     email,
-    password
+    password,
   });
 
   if (error) return res.status(400).json({ error: error.message });
@@ -67,7 +72,7 @@ router.post("/register", async (req, res) => {
   await supabase.from("profiles").insert({
     id: data.user!.id,
     email,
-    role: "user"
+    role: "user",
   });
 
   res.json({ message: "Check your email to confirm account" });
@@ -80,7 +85,7 @@ router.post("/reset", async (req, res) => {
   const { email } = req.body;
 
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: process.env.CLIENT_URL + "/reset-password"
+    redirectTo: process.env.CLIENT_URL + "/reset-password",
   });
 
   if (error) return res.status(400).json({ error: error.message });
@@ -95,8 +100,8 @@ router.get("/google", async (req, res) => {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: process.env.BACKEND_URL + "/auth/callback"
-    }
+      redirectTo: process.env.BACKEND_URL + "/auth/callback",
+    },
   });
 
   if (error) return res.status(400).json({ error: error.message });
@@ -115,7 +120,11 @@ router.get("/callback", async (req, res) => {
   if (!data?.user) return res.status(400).json({ error: "No user" });
 
   // Ensure profile exists
-  let profile = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
+  let profile = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", data.user.id)
+    .single();
 
   if (!profile.data) {
     profile = await supabase
@@ -123,7 +132,7 @@ router.get("/callback", async (req, res) => {
       .insert({
         id: data.user.id,
         email: data.user.email,
-        role: "user"
+        role: "user",
       })
       .select()
       .single();
