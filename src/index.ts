@@ -7,8 +7,14 @@ const app = express();
 
 app.use(
   cors({
-    origin: ["https://in7264.github.io", "http://localhost:5173"],
-    credentials: true
+    origin: [
+      "https://my-secure-shop.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:3000",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 app.use(express.json());
