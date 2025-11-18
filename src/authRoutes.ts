@@ -44,13 +44,33 @@ router.post("/login", async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
 
   // get role from profiles
-  const profile = await supabase
+  let profile = await supabase
     .from("profiles")
     .select("*")
     .eq("id", data.user.id)
     .single();
 
+  // Якщо профілю нема — створюємо
+  if (!profile.data) {
+    const { data: newProfile, error: insertError } = await supabase
+      .from("profiles")
+      .insert({
+        id: data.user.id,
+        email: data.user.email,
+        role: "user",
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      return res.status(500).json({ error: "Cannot create profile" });
+    }
+
+    profile.data = newProfile;
+  }
+
   const token = createSessionToken(profile.data);
+
   setSessionCookie(res, token);
 
   res.json({ message: "Logged in", role: profile.data.role });
@@ -126,8 +146,9 @@ router.get("/callback", async (req, res) => {
     .eq("id", data.user.id)
     .single();
 
+  // Якщо профілю нема — створюємо
   if (!profile.data) {
-    profile = await supabase
+    const { data: newProfile, error: insertError } = await supabase
       .from("profiles")
       .insert({
         id: data.user.id,
@@ -136,6 +157,12 @@ router.get("/callback", async (req, res) => {
       })
       .select()
       .single();
+
+    if (insertError) {
+      return res.status(500).json({ error: "Cannot create profile" });
+    }
+
+    profile.data = newProfile;
   }
 
   const token = createSessionToken(profile.data);
