@@ -32,48 +32,47 @@ function setSessionCookie(res: any, token: string) {
 // =========================
 //       EMAIL LOGIN
 // =========================
+
 router.post("/login", async (req, res) => {
-  console.log(req.body);
+  console.log("Login attempt:", req.body);
   const { email, password } = req.body;
 
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
+  try {
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-  if (error) return res.status(400).json({ error: error.message });
-
-  // get role from profiles
-  let profile = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", data.user.id)
-    .single();
-
-  // Якщо профілю нема — створюємо
-  if (!profile.data) {
-    const { data: newProfile, error: insertError } = await supabase
-      .from("profiles")
-      .insert({
-        id: data.user.id,
-        email: data.user.email,
-        role: "user",
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      return res.status(500).json({ error: "Cannot create profile" });
+    if (authError) {
+      console.error("Auth error:", authError);
+      return res.status(400).json({ error: authError.message });
     }
 
-    profile.data = newProfile;
+    console.log("User authenticated:", authData.user);
+
+    // Получаем данные пользователя напрямую из auth.users
+    const userData = {
+      id: authData.user.id,
+      email: authData.user.email,
+      role: authData.user.role || 'user' // Используем поле role из auth.users если есть
+    };
+
+    // Создаем JWT токен
+    const token = createSessionToken(userData);
+
+    // Устанавливаем куки
+    setSessionCookie(res, token);
+
+    res.json({ 
+      message: "Logged in", 
+      role: userData.role,
+      user: userData
+    });
+
+  } catch (error) {
+    console.error("Unexpected error in login:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
-
-  const token = createSessionToken(profile.data);
-
-  setSessionCookie(res, token);
-
-  res.json({ message: "Logged in", role: profile.data.role });
 });
 
 // =========================
