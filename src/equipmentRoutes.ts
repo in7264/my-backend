@@ -1,5 +1,5 @@
 import express from "express";
-import { supabase } from "./supabase";
+import { supabasePublic } from "./supabasePublic"; // Используем публичного клиента
 
 const router = express.Router();
 
@@ -8,14 +8,9 @@ const router = express.Router();
 // =========================
 router.get("/categories", async (req, res) => {
   try {
-    console.log("Environment check:", {
-      hasUrl: !!process.env.SUPABASE_URL,
-      hasKey: !!process.env.SUPABASE_SERVICE_ROLE,
-      urlLength: process.env.SUPABASE_URL?.length,
-      keyLength: process.env.SUPABASE_SERVICE_ROLE?.length,
-    });
+    console.log("Fetching categories with public client...");
 
-    const { data, error } = await supabase
+    const { data, error } = await supabasePublic
       .from("equipment")
       .select("category")
       .not("category", "is", null);
@@ -57,7 +52,7 @@ router.get("/category/:category", async (req, res) => {
     const { category } = req.params;
     console.log("Fetching equipment for category:", category);
 
-    const { data, error } = await supabase
+    const { data, error } = await supabasePublic
       .from("equipment")
       .select("*")
       .eq("category", decodeURIComponent(category))
@@ -80,7 +75,7 @@ router.get("/category/:category", async (req, res) => {
 // =========================
 router.get("/", async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabasePublic
       .from("equipment")
       .select("*")
       .order("created_at", { ascending: false });
