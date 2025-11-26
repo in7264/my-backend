@@ -1,197 +1,100 @@
 import express from "express";
-import jwt from "jsonwebtoken";
-import cookieParser from "cookie-parser";
 import { supabase } from "./supabase";
 
 const router = express.Router();
-router.use(cookieParser());
-
-// ===== Helper: create JWT =====
-function createSessionToken(user: any) {
-  return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    },
-    process.env.JWT_SECRET!,
-    { expiresIn: "7d" }
-  );
-}
-
-// ===== Helper: set cookie =====
-function setSessionCookie(res: any, token: string) {
-  res.cookie("session", token, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "none",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
-}
 
 // =========================
-//       EMAIL LOGIN
+//      GET CATEGORIES
 // =========================
-
-router.post("/login", async (req, res) => {
-  console.log("Login attempt:", req.body);
-  const { email, password } = req.body;
-
+router.get("/categories", async (req, res) => {
   try {
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+    console.log("Environment check:", {
+      hasUrl: !!process.env.SUPABASE_URL,
+      hasKey: !!process.env.SUPABASE_SERVICE_ROLE,
+      urlLength: process.env.SUPABASE_URL?.length,
+      keyLength: process.env.SUPABASE_SERVICE_ROLE?.length
     });
 
-    if (authError) {
-      console.error("Auth error:", authError);
-      return res.status(400).json({ error: authError.message });
+    const { data, error } = await supabase
+      .from("equipment")
+      .select("category")
+      .not("category", "is", null);
+
+    if (error) {
+      console.error("Categories error details:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      return res.status(500).json({ 
+        error: "Database error",
+        details: error.message 
+      });
     }
 
-    console.log("User authenticated:", authData.user);
+    console.log("Raw categories data:", data);
 
-    // Получаем данные пользователя напрямую из auth.users
-    const userData = {
-      id: authData.user.id,
-      email: authData.user.email,
-      role: authData.user.role || 'user' // Используем поле role из auth.users если есть
-    };
+    // Получаем уникальные категории
+    const categories = [...new Set(data.map((item) => item.category))].filter(
+      Boolean
+    );
 
-    // Создаем JWT токен
-    const token = createSessionToken(userData);
+    console.log("Unique categories:", categories);
 
-    // Устанавливаем куки
-    setSessionCookie(res, token);
-
-    res.json({ 
-      message: "Logged in", 
-      role: userData.role,
-      user: userData
-    });
-
+    res.json({ categories });
   } catch (error) {
-    console.error("Unexpected error in login:", error);
+    console.error("Unexpected error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // =========================
-//        REGISTER
+//   GET EQUIPMENT BY CATEGORY
 // =========================
-router.post("/register", async (req, res) => {
-  const { email, password } = req.body;
+router.get("/category/:category", async (req, res) => {
+  try {
+    const { category } = req.params;
+    console.log("Fetching equipment for category:", category);
 
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-  });
+    const { data, error } = await supabase
+      .from("equipment")
+      .select("*")
+      .eq("category", decodeURIComponent(category))
+      .order("created_at", { ascending: false });
 
-  if (error) return res.status(400).json({ error: error.message });
-
-  await supabase.from("profiles").insert({
-    id: data.user!.id,
-    email,
-    role: "user",
-  });
-
-  res.json({ message: "Check your email to confirm account" });
-});
-
-// =========================
-//      RESET PASSWORD
-// =========================
-router.post("/reset", async (req, res) => {
-  const { email } = req.body;
-
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: process.env.CLIENT_URL + "/reset-password",
-  });
-
-  if (error) return res.status(400).json({ error: error.message });
-
-  res.json({ message: "Reset email sent" });
-});
-
-// =========================
-//        GOOGLE LOGIN
-// =========================
-router.get("/google", async (req, res) => {
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: process.env.BACKEND_URL + "/auth/callback",
-    },
-  });
-
-  if (error) return res.status(400).json({ error: error.message });
-
-  res.redirect(data.url);
-});
-
-// =========================
-//     GOOGLE CALLBACK
-// =========================
-router.get("/callback", async (req, res) => {
-  const token_hash = req.query.token_hash as string;
-
-  const { data } = await supabase.auth.exchangeCodeForSession(token_hash);
-
-  if (!data?.user) return res.status(400).json({ error: "No user" });
-
-  // Ensure profile exists
-  let profile = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", data.user.id)
-    .single();
-
-  // Якщо профілю нема — створюємо
-  if (!profile.data) {
-    const { data: newProfile, error: insertError } = await supabase
-      .from("profiles")
-      .insert({
-        id: data.user.id,
-        email: data.user.email,
-        role: "user",
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      return res.status(500).json({ error: "Cannot create profile" });
+    if (error) {
+      console.error("Equipment error:", error);
+      return res.status(500).json({ error: error.message });
     }
 
-    profile.data = newProfile;
+    res.json({ items: data || [] });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
-
-  const token = createSessionToken(profile.data);
-  setSessionCookie(res, token);
-
-  res.redirect(process.env.CLIENT_URL + "/admin");
 });
 
 // =========================
-//      CHECK SESSION
+//      GET ALL EQUIPMENT
 // =========================
-router.get("/check", (req, res) => {
+router.get("/", async (req, res) => {
   try {
-    const token = req.cookies.session;
-    if (!token) return res.json({ authorized: false });
+    const { data, error } = await supabase
+      .from("equipment")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!);
+    if (error) {
+      console.error("Equipment error:", error);
+      return res.status(500).json({ error: error.message });
+    }
 
-    res.json({ authorized: true, user: decoded });
-  } catch {
-    res.json({ authorized: false });
+    res.json({ items: data || [] });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
-});
-
-// =========================
-//          LOGOUT
-// =========================
-router.get("/logout", (req, res) => {
-  res.clearCookie("session", { secure: true, sameSite: "none" });
-  res.json({ message: "Logged out" });
 });
 
 export default router;
