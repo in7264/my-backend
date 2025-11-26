@@ -8,20 +8,39 @@ const router = express.Router();
 // =========================
 router.get("/categories", async (req, res) => {
   try {
+    console.log("Environment check:", {
+      hasUrl: !!process.env.SUPABASE_URL,
+      hasKey: !!process.env.SUPABASE_SERVICE_ROLE,
+      urlLength: process.env.SUPABASE_URL?.length,
+      keyLength: process.env.SUPABASE_SERVICE_ROLE?.length,
+    });
+
     const { data, error } = await supabase
       .from("equipment")
       .select("category")
       .not("category", "is", null);
 
     if (error) {
-      console.error("Categories error:", error);
-      return res.status(500).json({ error: error.message });
+      console.error("Categories error details:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      return res.status(500).json({
+        error: "Database error",
+        details: error.message,
+      });
     }
+
+    console.log("Raw categories data:", data);
 
     // Получаем уникальные категории
     const categories = [...new Set(data.map((item) => item.category))].filter(
       Boolean
     );
+
+    console.log("Unique categories:", categories);
 
     res.json({ categories });
   } catch (error) {
@@ -36,11 +55,12 @@ router.get("/categories", async (req, res) => {
 router.get("/category/:category", async (req, res) => {
   try {
     const { category } = req.params;
+    console.log("Fetching equipment for category:", category);
 
     const { data, error } = await supabase
       .from("equipment")
       .select("*")
-      .eq("category", category)
+      .eq("category", decodeURIComponent(category))
       .order("created_at", { ascending: false });
 
     if (error) {
