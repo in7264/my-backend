@@ -1,8 +1,9 @@
 import express from "express";
 import cors from "cors";
 import authRoutes from "./authRoutes";
-import cookieParser from "cookie-parser";
 import equipmentRoutes from "./equipmentRoutes";
+import analyticsRoutes from "./analyticsRoutes";
+import cookieParser from "cookie-parser";
 
 const app = express();
 
@@ -23,9 +24,15 @@ app.use(cookieParser());
 
 app.use("/auth", authRoutes);
 app.use("/equipment", equipmentRoutes);
+app.use("/analytics", analyticsRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Backend is running!" });
+});
+
+// Добавьте обработчик для всех остальных маршрутов (для SPA)
+app.get("*", (req, res) => {
+  res.status(404).json({ error: "Endpoint not found" });
 });
 
 app.listen(3000, () => console.log("Server started on port 3000"));
