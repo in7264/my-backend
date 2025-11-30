@@ -4,6 +4,8 @@ import authRoutes from "./authRoutes";
 import equipmentRoutes from "./equipmentRoutes";
 import analyticsRoutes from "./analyticsRoutes";
 import cookieParser from "cookie-parser";
+import { authMiddleware } from "./authMiddleware";
+import userRoutes from "./userRoutes";
 
 const app = express();
 
@@ -25,6 +27,7 @@ app.use(cookieParser());
 app.use("/auth", authRoutes);
 app.use("/equipment", equipmentRoutes);
 app.use("/analytics", analyticsRoutes);
+app.use("/user", authMiddleware, userRoutes); // Добавьте эту строку
 
 app.get("/", (req, res) => {
   res.json({ message: "Backend is running!" });
