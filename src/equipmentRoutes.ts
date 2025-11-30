@@ -97,7 +97,31 @@ router.get("/", async (req, res) => {
   }
 });
 
-// equipmentRoutes.ts - дополнительные endpoints
+// =========================
+//   GET SINGLE EQUIPMENT
+// =========================
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log("Fetching equipment with id:", id);
+
+    const { data, error } = await supabasePublic
+      .from("equipment")
+      .select("*")
+      .eq("id", parseInt(id))
+      .single();
+
+    if (error) {
+      console.error("Equipment error:", error);
+      return res.status(404).json({ error: "Equipment not found" });
+    }
+
+    res.json({ equipment: data });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Отслеживание просмотра товара
 router.post("/:id/view", async (req: AuthenticatedRequest, res) => {
