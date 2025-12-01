@@ -125,25 +125,31 @@ router.get("/:id", async (req, res) => {
     const { id } = req.params;
     console.log("Fetching equipment with id:", id);
 
+    // Используем .select() вместо .single()
     const { data, error } = await supabasePublic
       .from("equipment")
       .select("*")
-      .eq("id", parseInt(id))
-      .single();
+      .eq("id", parseInt(id));
 
     if (error) {
       console.error("Equipment error:", error);
       return res.status(404).json({ error: "Equipment not found" });
     }
 
-    // Добавляем вычисление main_image если его нет
+    // Проверяем что нашли оборудование
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: "Equipment not found" });
+    }
+
+    // Вычисляем main_image из массива images
     const equipment = {
-      ...data,
+      ...data[0],
       main_image:
-        data.main_image ||
-        (Array.isArray(data.images) && data.images.length > 0
-          ? data.images[0]
-          : null),
+        data[0].images &&
+        Array.isArray(data[0].images) &&
+        data[0].images.length > 0
+          ? data[0].images[0]
+          : null,
     };
 
     res.json({ equipment });
@@ -275,7 +281,7 @@ async function getDailyStats(equipmentId: number) {
 //       ADMIN CRUD
 // =========================
 
-// В PUT запросе
+// В PUT запросе:
 router.put("/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
@@ -309,7 +315,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     }
 
     // Обрабатываем images
-    let processedImages = [];
+    let processedImages: string[] = [];
     if (images !== undefined) {
       // Преобразуем images в массив если это строка
       if (typeof images === "string") {
@@ -351,22 +357,28 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
     console.log("Update data for DB:", updateData);
 
-    // Обновляем оборудование
+    // Обновляем оборудование БЕЗ .single()
     const { data, error } = await supabase
       .from("equipment")
       .update(updateData)
       .eq("id", parseInt(id))
-      .select()
-      .single();
+      .select(); // Убираем .single()
 
     if (error) {
       console.error("Update equipment error:", error);
       return res.status(500).json({ error: error.message });
     }
 
+    // Проверяем что обновление прошло успешно
+    if (!data || data.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "Equipment not found after update" });
+    }
+
     res.json({
       success: true,
-      equipment: data,
+      equipment: data[0], // Берем первый элемент массива
       message: "Оборудование успешно обновлено",
     });
   } catch (error) {
@@ -375,7 +387,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
   }
 });
 
-// В POST запросе
+// В POST запросе:
 router.post("/", async (req: AuthenticatedRequest, res) => {
   try {
     // Проверяем права доступа - только админы
@@ -393,7 +405,7 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
     }
 
     // Обрабатываем images
-    let processedImages = [];
+    let processedImages: string[] = [];
     if (images !== undefined && images !== null) {
       // Преобразуем images в массив если это строка
       if (typeof images === "string") {
@@ -408,6 +420,7 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
 
     console.log("Creating equipment with images:", processedImages);
 
+    // Используем .select() вместо .single()
     const { data, error } = await supabase
       .from("equipment")
       .insert({
@@ -418,17 +431,21 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
         category,
         images: processedImages,
       })
-      .select()
-      .single();
+      .select(); // Убираем .single()
 
     if (error) {
       console.error("Create equipment error:", error);
       return res.status(500).json({ error: error.message });
     }
 
+    // Проверяем что данные были созданы
+    if (!data || data.length === 0) {
+      return res.status(500).json({ error: "Failed to create equipment" });
+    }
+
     res.status(201).json({
       success: true,
-      equipment: data,
+      equipment: data[0], // Берем первый элемент массива
       message: "Оборудование успешно добавлено",
     });
   } catch (error) {
