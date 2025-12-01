@@ -125,14 +125,21 @@ router.get("/:id", async (req, res) => {
 
 // Отслеживание просмотра товара
 router.post("/:id/view", async (req: AuthenticatedRequest, res) => {
-  // Используйте AuthenticatedRequest
   try {
     const { id } = req.params;
-    const user_id = req.user?.id; // Теперь это работает
-    const ip_address = req.ip;
+    const user_id = req.user?.id;
+
+    // Получаем реальный IP-адрес
+    const ip_address =
+      (req.headers["x-forwarded-for"] as string) ||
+      req.socket.remoteAddress ||
+      "::1";
+    // Убираем порт если есть
+    const clean_ip = ip_address.split(":")[0];
+
     const user_agent = req.get("User-Agent");
 
-    // Сначала проверяем существование товара
+    // Проверяем существование товара
     const { data: equipment, error: equipmentError } = await supabase
       .from("equipment")
       .select("id")
@@ -147,7 +154,7 @@ router.post("/:id/view", async (req: AuthenticatedRequest, res) => {
     const { error: viewError } = await supabase.from("product_views").insert({
       equipment_id: parseInt(id),
       user_id: user_id || null,
-      ip_address,
+      ip_address: clean_ip,
       user_agent,
     });
 
@@ -156,7 +163,7 @@ router.post("/:id/view", async (req: AuthenticatedRequest, res) => {
       return res.status(500).json({ error: viewError.message });
     }
 
-    // Обновляем счетчик просмотров в таблице equipment
+    // Обновляем счетчик просмотров
     const { error: updateError } = await supabase.rpc(
       "increment_equipment_views",
       {
@@ -166,7 +173,6 @@ router.post("/:id/view", async (req: AuthenticatedRequest, res) => {
 
     if (updateError) {
       console.error("Update views count error:", updateError);
-      // Не прерываем выполнение, так как основной лог уже записан
     }
 
     res.json({ success: true });
