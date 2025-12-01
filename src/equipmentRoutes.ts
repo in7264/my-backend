@@ -183,7 +183,7 @@ router.get("/:id/stats", async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
 
     // Проверяем права доступа - только админы могут смотреть статистику
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user || req.user.role !== "supabase_admin") {
       return res.status(403).json({ error: "Access denied" });
     }
 
@@ -243,7 +243,7 @@ async function getDailyStats(equipmentId: number) {
 router.post("/", async (req: AuthenticatedRequest, res) => {
   try {
     // Проверяем права доступа - только админы
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user || req.user.role !== "supabase_admin") {
       return res.status(403).json({ error: "Access denied" });
     }
 
@@ -293,7 +293,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
 
     // Проверяем права доступа
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user || req.user.role !== "supabase_admin") {
       return res.status(403).json({ error: "Access denied" });
     }
 
@@ -360,7 +360,7 @@ router.delete("/:id", async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
 
     // Проверяем права доступа
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user || req.user.role !== "supabase_admin") {
       return res.status(403).json({ error: "Access denied" });
     }
 
