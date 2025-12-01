@@ -9,66 +9,74 @@ const router = express.Router();
 // =========================
 
 // Добавить в избранное
-router.post("/favorites/:equipmentId", async (req: AuthenticatedRequest, res) => {
-  try {
-    const { equipmentId } = req.params;
-    const userId = req.user?.id;
+router.post(
+  "/favorites/:equipmentId",
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { equipmentId } = req.params;
+      const userId = req.user?.id;
 
-    if (!userId) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
 
-    const { data, error } = await supabase
-      .from("favorites")
-      .insert({
-        user_id: userId,
-        equipment_id: parseInt(equipmentId)
-      })
-      .select(`
+      const { data, error } = await supabase
+        .from("favorites")
+        .insert({
+          user_id: userId,
+          equipment_id: parseInt(equipmentId),
+        })
+        .select(
+          `
         *,
         equipment:equipment_id (*)
-      `)
-      .single();
+      `
+        )
+        .single();
 
-    if (error) {
-      console.error("Add to favorites error:", error);
-      return res.status(500).json({ error: error.message });
+      if (error) {
+        console.error("Add to favorites error:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      res.json({ success: true, favorite: data });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    res.json({ success: true, favorite: data });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
-});
+);
 
 // Удалить из избранного
-router.delete("/favorites/:equipmentId", async (req: AuthenticatedRequest, res) => {
-  try {
-    const { equipmentId } = req.params;
-    const userId = req.user?.id;
+router.delete(
+  "/favorites/:equipmentId",
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { equipmentId } = req.params;
+      const userId = req.user?.id;
 
-    if (!userId) {
-      return res.status(401).json({ error: "Not authenticated" });
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const { error } = await supabase
+        .from("favorites")
+        .delete()
+        .eq("user_id", userId)
+        .eq("equipment_id", parseInt(equipmentId));
+
+      if (error) {
+        console.error("Remove from favorites error:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    const { error } = await supabase
-      .from("favorites")
-      .delete()
-      .eq("user_id", userId)
-      .eq("equipment_id", parseInt(equipmentId));
-
-    if (error) {
-      console.error("Remove from favorites error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
-});
+);
 
 // Получить избранное пользователя
 router.get("/favorites", async (req: AuthenticatedRequest, res) => {
@@ -81,10 +89,12 @@ router.get("/favorites", async (req: AuthenticatedRequest, res) => {
 
     const { data, error } = await supabase
       .from("favorites")
-      .select(`
+      .select(
+        `
         *,
         equipment:equipment_id (*)
-      `)
+      `
+      )
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
@@ -93,7 +103,21 @@ router.get("/favorites", async (req: AuthenticatedRequest, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ favorites: data || [] });
+    // Добавляем вычисление main_image если его нет
+    const favorites = (data || []).map((fav) => ({
+      ...fav,
+      equipment: {
+        ...fav.equipment,
+        main_image:
+          fav.equipment.main_image ||
+          (Array.isArray(fav.equipment.images) &&
+          fav.equipment.images.length > 0
+            ? fav.equipment.images[0]
+            : null),
+      },
+    }));
+
+    res.json({ favorites });
   } catch (error) {
     console.error("Unexpected error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -101,33 +125,37 @@ router.get("/favorites", async (req: AuthenticatedRequest, res) => {
 });
 
 // Проверить, есть ли товар в избранном
-router.get("/favorites/:equipmentId/check", async (req: AuthenticatedRequest, res) => {
-  try {
-    const { equipmentId } = req.params;
-    const userId = req.user?.id;
+router.get(
+  "/favorites/:equipmentId/check",
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { equipmentId } = req.params;
+      const userId = req.user?.id;
 
-    if (!userId) {
-      return res.json({ isFavorite: false });
+      if (!userId) {
+        return res.json({ isFavorite: false });
+      }
+
+      const { data, error } = await supabase
+        .from("favorites")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("equipment_id", parseInt(equipmentId))
+        .single();
+
+      if (error && error.code !== "PGRST116") {
+        // PGRST116 - no rows returned
+        console.error("Check favorite error:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      res.json({ isFavorite: !!data });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    const { data, error } = await supabase
-      .from("favorites")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("equipment_id", parseInt(equipmentId))
-      .single();
-
-    if (error && error.code !== 'PGRST116') { // PGRST116 - no rows returned
-      console.error("Check favorite error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json({ isFavorite: !!data });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
-});
+);
 
 // =========================
 //          CART
@@ -157,15 +185,17 @@ router.post("/cart/:equipmentId", async (req: AuthenticatedRequest, res) => {
       // Обновляем количество
       result = await supabase
         .from("cart_items")
-        .update({ 
+        .update({
           quantity: existingItem.quantity + quantity,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
         .eq("id", existingItem.id)
-        .select(`
+        .select(
+          `
           *,
           equipment:equipment_id (*)
-        `)
+        `
+        )
         .single();
     } else {
       // Добавляем новый товар
@@ -174,12 +204,14 @@ router.post("/cart/:equipmentId", async (req: AuthenticatedRequest, res) => {
         .insert({
           user_id: userId,
           equipment_id: parseInt(equipmentId),
-          quantity: quantity
+          quantity: quantity,
         })
-        .select(`
+        .select(
+          `
           *,
           equipment:equipment_id (*)
-        `)
+        `
+        )
         .single();
     }
 
@@ -224,16 +256,18 @@ router.put("/cart/:equipmentId", async (req: AuthenticatedRequest, res) => {
 
     const { data, error } = await supabase
       .from("cart_items")
-      .update({ 
+      .update({
         quantity: quantity,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
       .eq("user_id", userId)
       .eq("equipment_id", parseInt(equipmentId))
-      .select(`
+      .select(
+        `
         *,
         equipment:equipment_id (*)
-      `)
+      `
+      )
       .single();
 
     if (error) {
@@ -287,10 +321,12 @@ router.get("/cart", async (req: AuthenticatedRequest, res) => {
 
     const { data, error } = await supabase
       .from("cart_items")
-      .select(`
+      .select(
+        `
         *,
         equipment:equipment_id (*)
-      `)
+      `
+      )
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
@@ -299,15 +335,30 @@ router.get("/cart", async (req: AuthenticatedRequest, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    // Рассчитываем общую стоимость
-    const total = data?.reduce((sum, item) => {
-      return sum + (item.equipment.price * item.quantity);
-    }, 0) || 0;
+    // Добавляем вычисление main_image если его нет
+    const cartItems = (data || []).map((item) => ({
+      ...item,
+      equipment: {
+        ...item.equipment,
+        main_image:
+          item.equipment.main_image ||
+          (Array.isArray(item.equipment.images) &&
+          item.equipment.images.length > 0
+            ? item.equipment.images[0]
+            : null),
+      },
+    }));
 
-    res.json({ 
-      cartItems: data || [],
-      total: total,
-      totalItems: data?.reduce((sum, item) => sum + item.quantity, 0) || 0
+    // Рассчитываем общую стоимость
+    const total =
+      cartItems.reduce((sum, item) => {
+        return sum + item.equipment.price * item.quantity;
+      }, 0) || 0;
+
+    res.json({
+      cartItems,
+      total,
+      totalItems: cartItems.reduce((sum, item) => sum + item.quantity, 0) || 0,
     });
   } catch (error) {
     console.error("Unexpected error:", error);

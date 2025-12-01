@@ -68,7 +68,17 @@ router.get("/category/:category", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ items: data || [] });
+    // Добавляем вычисление main_image если его нет
+    const items = (data || []).map((item) => ({
+      ...item,
+      main_image:
+        item.main_image ||
+        (Array.isArray(item.images) && item.images.length > 0
+          ? item.images[0]
+          : null),
+    }));
+
+    res.json({ items });
   } catch (error) {
     console.error("Unexpected error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -90,7 +100,17 @@ router.get("/", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ items: data || [] });
+    // Добавляем вычисление main_image если его нет
+    const items = (data || []).map((item) => ({
+      ...item,
+      main_image:
+        item.main_image ||
+        (Array.isArray(item.images) && item.images.length > 0
+          ? item.images[0]
+          : null),
+    }));
+
+    res.json({ items });
   } catch (error) {
     console.error("Unexpected error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -116,7 +136,17 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ error: "Equipment not found" });
     }
 
-    res.json({ equipment: data });
+    // Добавляем вычисление main_image если его нет
+    const equipment = {
+      ...data,
+      main_image:
+        data.main_image ||
+        (Array.isArray(data.images) && data.images.length > 0
+          ? data.images[0]
+          : null),
+    };
+
+    res.json({ equipment });
   } catch (error) {
     console.error("Unexpected error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -255,10 +285,10 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    const { name, description, price, stock, category, main_image, images } =
+    let { name, description, price, stock, category, main_image, images } =
       req.body;
 
-    console.log('Received update request:', {
+    console.log("Received update request:", {
       id,
       name,
       price,
@@ -266,7 +296,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       category,
       main_image,
       images,
-      imagesType: Array.isArray(images) ? 'array' : typeof images
+      imagesType: Array.isArray(images) ? "array" : typeof images,
     });
 
     // Проверяем существование оборудования
@@ -278,6 +308,25 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
     if (fetchError || !existingEquipment) {
       return res.status(404).json({ error: "Equipment not found" });
+    }
+
+    // Автоматически устанавливаем main_image если не предоставлен
+    let processedImages = [];
+    if (images !== undefined) {
+      // Преобразуем images в массив если это строка
+      if (typeof images === "string") {
+        processedImages = images
+          .split(",")
+          .filter((img: string) => img.trim().length > 0);
+      } else if (Array.isArray(images)) {
+        processedImages = images.filter((img: string) => img.trim().length > 0);
+      }
+
+      // Если main_image не предоставлен, используем первое изображение
+      if (!main_image && processedImages.length > 0) {
+        main_image = processedImages[0];
+        console.log("Auto-set main_image to first image:", main_image);
+      }
     }
 
     // Записываем изменение цены в историю
@@ -303,15 +352,10 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     if (category !== undefined) updateData.category = category;
     if (main_image !== undefined) updateData.main_image = main_image;
     if (images !== undefined) {
-      // Преобразуем images в массив если это строка
-      if (typeof images === 'string') {
-        updateData.images = images.split(',').filter((img: string) => img.trim().length > 0);
-      } else if (Array.isArray(images)) {
-        updateData.images = images.filter((img: string) => img.trim().length > 0);
-      }
+      updateData.images = processedImages;
     }
 
-    console.log('Update data for DB:', updateData);
+    console.log("Update data for DB:", updateData);
 
     // Обновляем оборудование
     const { data, error } = await supabase
@@ -345,7 +389,7 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    const { name, description, price, stock, category, main_image, images } =
+    let { name, description, price, stock, category, main_image, images } =
       req.body;
 
     // Валидация
@@ -353,6 +397,28 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
       return res.status(400).json({
         error: "Missing required fields: name, price, stock, category",
       });
+    }
+
+    // Автоматически устанавливаем main_image если не предоставлен
+    let processedImages = [];
+    if (images !== undefined && images !== null) {
+      // Преобразуем images в массив если это строка
+      if (typeof images === "string") {
+        processedImages = images
+          .split(",")
+          .filter((img: string) => img.trim().length > 0);
+      } else if (Array.isArray(images)) {
+        processedImages = images.filter((img: string) => img.trim().length > 0);
+      }
+
+      // Если main_image не предоставлен, используем первое изображение
+      if (!main_image && processedImages.length > 0) {
+        main_image = processedImages[0];
+        console.log(
+          "Auto-set main_image to first image for new equipment:",
+          main_image
+        );
+      }
     }
 
     const { data, error } = await supabase
@@ -364,7 +430,7 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
         stock: parseInt(stock),
         category,
         main_image: main_image || null,
-        images: images || [],
+        images: processedImages,
       })
       .select()
       .single();
