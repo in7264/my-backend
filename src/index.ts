@@ -19,7 +19,7 @@ app.use(
       "http://localhost:3000",
     ],
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
@@ -30,6 +30,8 @@ app.use("/auth", authRoutes);
 app.use("/equipment", equipmentRoutes);
 app.use("/analytics", analyticsRoutes);
 app.use("/user", authMiddleware, userRoutes);
+
+app.options("*", cors());
 
 app.get("/", (req, res) => {
   res.json({ message: "Backend is running!" });

@@ -245,55 +245,7 @@ async function getDailyStats(equipmentId: number) {
 //       ADMIN CRUD
 // =========================
 
-// Добавить новое оборудование
-router.post("/", async (req: AuthenticatedRequest, res) => {
-  try {
-    // Проверяем права доступа - только админы
-    if (!req.user || req.user.role !== "supabase_admin") {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    const { name, description, price, stock, category, main_image, images } =
-      req.body;
-
-    // Валидация
-    if (!name || !price || !stock || !category) {
-      return res.status(400).json({
-        error: "Missing required fields: name, price, stock, category",
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("equipment")
-      .insert({
-        name,
-        description: description || "",
-        price: parseFloat(price),
-        stock: parseInt(stock),
-        category,
-        main_image: main_image || null,
-        images: images || [],
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Create equipment error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.status(201).json({
-      success: true,
-      equipment: data,
-      message: "Оборудование успешно добавлено",
-    });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Обновить оборудование
+// PUT /equipment/:id
 router.put("/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
@@ -353,6 +305,54 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       success: true,
       equipment: data,
       message: "Оборудование успешно обновлено",
+    });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /equipment
+router.post("/", async (req: AuthenticatedRequest, res) => {
+  try {
+    // Проверяем права доступа - только админы
+    if (!req.user || req.user.role !== "supabase_admin") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const { name, description, price, stock, category, main_image, images } =
+      req.body;
+
+    // Валидация
+    if (!name || !price || !stock || !category) {
+      return res.status(400).json({
+        error: "Missing required fields: name, price, stock, category",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("equipment")
+      .insert({
+        name,
+        description: description || "",
+        price: parseFloat(price),
+        stock: parseInt(stock),
+        category,
+        main_image: main_image || null,
+        images: images || [],
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Create equipment error:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(201).json({
+      success: true,
+      equipment: data,
+      message: "Оборудование успешно добавлено",
     });
   } catch (error) {
     console.error("Unexpected error:", error);
