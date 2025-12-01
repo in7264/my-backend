@@ -9,6 +9,9 @@ import userRoutes from "./userRoutes";
 
 const app = express();
 
+app.use(express.json({ limit: "10mb" })); // Увеличьте до 10MB
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
 app.set("trust proxy", true);
 
 app.use(
