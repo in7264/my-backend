@@ -275,7 +275,7 @@ async function getDailyStats(equipmentId: number) {
 //       ADMIN CRUD
 // =========================
 
-// PUT /equipment/:id
+// В PUT запросе
 router.put("/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
@@ -285,8 +285,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    let { name, description, price, stock, category, main_image, images } =
-      req.body;
+    let { name, description, price, stock, category, images } = req.body;
 
     console.log("Received update request:", {
       id,
@@ -294,7 +293,6 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       price,
       stock,
       category,
-      main_image,
       images,
       imagesType: Array.isArray(images) ? "array" : typeof images,
     });
@@ -310,23 +308,21 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       return res.status(404).json({ error: "Equipment not found" });
     }
 
-    // Автоматически устанавливаем main_image если не предоставлен
+    // Обрабатываем images
     let processedImages = [];
     if (images !== undefined) {
       // Преобразуем images в массив если это строка
       if (typeof images === "string") {
         processedImages = images
           .split(",")
-          .filter((img: string) => img.trim().length > 0);
+          .map((img: string) => img.trim())
+          .filter((img: string) => img.length > 0);
       } else if (Array.isArray(images)) {
         processedImages = images.filter((img: string) => img.trim().length > 0);
       }
-
-      // Если main_image не предоставлен, используем первое изображение
-      if (!main_image && processedImages.length > 0) {
-        main_image = processedImages[0];
-        console.log("Auto-set main_image to first image:", main_image);
-      }
+    } else {
+      // Если images не пришел в запросе, оставляем старые
+      processedImages = existingEquipment.images || [];
     }
 
     // Записываем изменение цены в историю
@@ -350,10 +346,8 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     if (price !== undefined) updateData.price = parseFloat(price);
     if (stock !== undefined) updateData.stock = parseInt(stock);
     if (category !== undefined) updateData.category = category;
-    if (main_image !== undefined) updateData.main_image = main_image;
-    if (images !== undefined) {
-      updateData.images = processedImages;
-    }
+    // images - всегда обновляем, даже если пустой массив
+    updateData.images = processedImages;
 
     console.log("Update data for DB:", updateData);
 
@@ -381,7 +375,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
   }
 });
 
-// POST /equipment
+// В POST запросе
 router.post("/", async (req: AuthenticatedRequest, res) => {
   try {
     // Проверяем права доступа - только админы
@@ -389,8 +383,7 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    let { name, description, price, stock, category, main_image, images } =
-      req.body;
+    let { name, description, price, stock, category, images } = req.body;
 
     // Валидация
     if (!name || !price || !stock || !category) {
@@ -399,27 +392,21 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
       });
     }
 
-    // Автоматически устанавливаем main_image если не предоставлен
+    // Обрабатываем images
     let processedImages = [];
     if (images !== undefined && images !== null) {
       // Преобразуем images в массив если это строка
       if (typeof images === "string") {
         processedImages = images
           .split(",")
-          .filter((img: string) => img.trim().length > 0);
+          .map((img: string) => img.trim())
+          .filter((img: string) => img.length > 0);
       } else if (Array.isArray(images)) {
         processedImages = images.filter((img: string) => img.trim().length > 0);
       }
-
-      // Если main_image не предоставлен, используем первое изображение
-      if (!main_image && processedImages.length > 0) {
-        main_image = processedImages[0];
-        console.log(
-          "Auto-set main_image to first image for new equipment:",
-          main_image
-        );
-      }
     }
+
+    console.log("Creating equipment with images:", processedImages);
 
     const { data, error } = await supabase
       .from("equipment")
@@ -429,7 +416,6 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
         price: parseFloat(price),
         stock: parseInt(stock),
         category,
-        main_image: main_image || null,
         images: processedImages,
       })
       .select()
