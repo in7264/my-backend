@@ -303,20 +303,25 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       imagesType: Array.isArray(images) ? "array" : typeof images,
     });
 
-    // Проверяем существование оборудования
+    // Сначала проверяем существование оборудования
     const { data: existingEquipment, error: fetchError } = await supabase
       .from("equipment")
       .select("*")
       .eq("id", parseInt(id))
-      .single();
+      .maybeSingle(); // Используем maybeSingle вместо single
 
-    if (fetchError || !existingEquipment) {
+    if (fetchError) {
+      console.error("Fetch existing equipment error:", fetchError);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    if (!existingEquipment) {
       return res.status(404).json({ error: "Equipment not found" });
     }
 
     // Обрабатываем images
     let processedImages: string[] = [];
-    if (images !== undefined) {
+    if (images !== undefined && images !== null) {
       // Преобразуем images в массив если это строка
       if (typeof images === "string") {
         processedImages = images
@@ -333,12 +338,19 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
     // Записываем изменение цены в историю
     if (price && parseFloat(price) !== existingEquipment.price) {
-      await supabase.from("price_history").insert({
-        equipment_id: parseInt(id),
-        old_price: existingEquipment.price,
-        new_price: parseFloat(price),
-        changed_by: req.user.id,
-      });
+      const { error: priceError } = await supabase
+        .from("price_history")
+        .insert({
+          equipment_id: parseInt(id),
+          old_price: existingEquipment.price,
+          new_price: parseFloat(price),
+          changed_by: req.user.id,
+        });
+
+      if (priceError) {
+        console.error("Price history error:", priceError);
+        // Не прерываем выполнение, только логируем
+      }
     }
 
     // Подготавливаем данные для обновления
@@ -352,33 +364,51 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     if (price !== undefined) updateData.price = parseFloat(price);
     if (stock !== undefined) updateData.stock = parseInt(stock);
     if (category !== undefined) updateData.category = category;
-    // images - всегда обновляем, даже если пустой массив
+    // images - всегда обновляем
     updateData.images = processedImages;
 
     console.log("Update data for DB:", updateData);
 
-    // Обновляем оборудование БЕЗ .single()
-    const { data, error } = await supabase
+    // Обновляем оборудование
+    const { error: updateError } = await supabase
       .from("equipment")
       .update(updateData)
+      .eq("id", parseInt(id));
+
+    if (updateError) {
+      console.error("Update equipment error:", updateError);
+      return res.status(500).json({ error: updateError.message });
+    }
+
+    // После обновления получаем обновленные данные
+    const { data: updatedData, error: selectError } = await supabase
+      .from("equipment")
+      .select("*")
       .eq("id", parseInt(id))
-      .select(); // Убираем .single()
+      .single();
 
-    if (error) {
-      console.error("Update equipment error:", error);
-      return res.status(500).json({ error: error.message });
+    if (selectError) {
+      console.error("Select after update error:", selectError);
+      // Возвращаем успех даже если не можем получить обновленные данные
+      return res.json({
+        success: true,
+        message: "Оборудование успешно обновлено (не удалось получить обновленные данные)",
+      });
     }
 
-    // Проверяем что обновление прошло успешно
-    if (!data || data.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "Equipment not found after update" });
-    }
+    // Вычисляем main_image для ответа
+    const responseEquipment = {
+      ...updatedData,
+      main_image: updatedData.images && 
+                  Array.isArray(updatedData.images) && 
+                  updatedData.images.length > 0 
+        ? updatedData.images[0] 
+        : null
+    };
 
     res.json({
       success: true,
-      equipment: data[0], // Берем первый элемент массива
+      equipment: responseEquipment,
       message: "Оборудование успешно обновлено",
     });
   } catch (error) {
@@ -408,7 +438,7 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
     let processedImages: string[] = [];
     if (images !== undefined && images !== null) {
       // Преобразуем images в массив если это строка
-      if (typeof images === "string") {
+      if (typeof images === 'string') {
         processedImages = images
           .split(",")
           .map((img: string) => img.trim())
@@ -418,9 +448,9 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
       }
     }
 
-    console.log("Creating equipment with images:", processedImages);
+    console.log('Creating equipment with images:', processedImages);
 
-    // Используем .select() вместо .single()
+    // Создаем оборудование
     const { data, error } = await supabase
       .from("equipment")
       .insert({
@@ -431,21 +461,27 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
         category,
         images: processedImages,
       })
-      .select(); // Убираем .single()
+      .select()
+      .single();
 
     if (error) {
       console.error("Create equipment error:", error);
       return res.status(500).json({ error: error.message });
     }
 
-    // Проверяем что данные были созданы
-    if (!data || data.length === 0) {
-      return res.status(500).json({ error: "Failed to create equipment" });
-    }
+    // Вычисляем main_image для ответа
+    const responseEquipment = {
+      ...data,
+      main_image: data.images && 
+                  Array.isArray(data.images) && 
+                  data.images.length > 0 
+        ? data.images[0] 
+        : null
+    };
 
     res.status(201).json({
       success: true,
-      equipment: data[0], // Берем первый элемент массива
+      equipment: responseEquipment,
       message: "Оборудование успешно добавлено",
     });
   } catch (error) {
