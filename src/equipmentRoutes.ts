@@ -235,4 +235,175 @@ async function getDailyStats(equipmentId: number) {
   return data || [];
 }
 
+// =========================
+//       ADMIN CRUD
+// =========================
+
+// Добавить новое оборудование
+router.post("/", async (req: AuthenticatedRequest, res) => {
+  try {
+    // Проверяем права доступа - только админы
+    if (!req.user || req.user.role !== "admin") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const { name, description, price, stock, category, main_image, images } =
+      req.body;
+
+    // Валидация
+    if (!name || !price || !stock || !category) {
+      return res.status(400).json({
+        error: "Missing required fields: name, price, stock, category",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("equipment")
+      .insert({
+        name,
+        description: description || "",
+        price: parseFloat(price),
+        stock: parseInt(stock),
+        category,
+        main_image: main_image || null,
+        images: images || [],
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Create equipment error:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(201).json({
+      success: true,
+      equipment: data,
+      message: "Оборудование успешно добавлено",
+    });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Обновить оборудование
+router.put("/:id", async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+
+    // Проверяем права доступа
+    if (!req.user || req.user.role !== "admin") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const { name, description, price, stock, category, main_image, images } =
+      req.body;
+
+    // Проверяем существование оборудования
+    const { data: existingEquipment, error: fetchError } = await supabase
+      .from("equipment")
+      .select("*")
+      .eq("id", parseInt(id))
+      .single();
+
+    if (fetchError || !existingEquipment) {
+      return res.status(404).json({ error: "Equipment not found" });
+    }
+
+    // Записываем изменение цены в историю
+    if (price && parseFloat(price) !== existingEquipment.price) {
+      await supabase.from("price_history").insert({
+        equipment_id: parseInt(id),
+        old_price: existingEquipment.price,
+        new_price: parseFloat(price),
+        changed_by: req.user.id,
+      });
+    }
+
+    // Обновляем оборудование
+    const { data, error } = await supabase
+      .from("equipment")
+      .update({
+        name: name || existingEquipment.name,
+        description: description || existingEquipment.description,
+        price: price ? parseFloat(price) : existingEquipment.price,
+        stock: stock ? parseInt(stock) : existingEquipment.stock,
+        category: category || existingEquipment.category,
+        main_image: main_image || existingEquipment.main_image,
+        images: images || existingEquipment.images,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", parseInt(id))
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Update equipment error:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({
+      success: true,
+      equipment: data,
+      message: "Оборудование успешно обновлено",
+    });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Удалить оборудование
+router.delete("/:id", async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+
+    // Проверяем права доступа
+    if (!req.user || req.user.role !== "admin") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Проверяем существование оборудования
+    const { data: existingEquipment, error: fetchError } = await supabase
+      .from("equipment")
+      .select("*")
+      .eq("id", parseInt(id))
+      .single();
+
+    if (fetchError || !existingEquipment) {
+      return res.status(404).json({ error: "Equipment not found" });
+    }
+
+    // Удаляем связанные данные (опционально)
+    await supabase
+      .from("product_views")
+      .delete()
+      .eq("equipment_id", parseInt(id));
+
+    await supabase
+      .from("price_history")
+      .delete()
+      .eq("equipment_id", parseInt(id));
+
+    // Удаляем оборудование
+    const { error } = await supabase
+      .from("equipment")
+      .delete()
+      .eq("id", parseInt(id));
+
+    if (error) {
+      console.error("Delete equipment error:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({
+      success: true,
+      message: "Оборудование успешно удалено",
+    });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 export default router;

@@ -27,7 +27,7 @@ app.use(cookieParser());
 app.use("/auth", authRoutes);
 app.use("/equipment", equipmentRoutes);
 app.use("/analytics", analyticsRoutes);
-app.use("/user", authMiddleware, userRoutes); // Добавьте эту строку
+app.use("/user", authMiddleware, userRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Backend is running!" });
