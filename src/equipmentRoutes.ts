@@ -258,6 +258,17 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     const { name, description, price, stock, category, main_image, images } =
       req.body;
 
+    console.log('Received update request:', {
+      id,
+      name,
+      price,
+      stock,
+      category,
+      main_image,
+      images,
+      imagesType: Array.isArray(images) ? 'array' : typeof images
+    });
+
     // Проверяем существование оборудования
     const { data: existingEquipment, error: fetchError } = await supabase
       .from("equipment")
@@ -279,19 +290,33 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       });
     }
 
+    // Подготавливаем данные для обновления
+    const updateData: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    // Добавляем только те поля которые пришли в запросе
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (price !== undefined) updateData.price = parseFloat(price);
+    if (stock !== undefined) updateData.stock = parseInt(stock);
+    if (category !== undefined) updateData.category = category;
+    if (main_image !== undefined) updateData.main_image = main_image;
+    if (images !== undefined) {
+      // Преобразуем images в массив если это строка
+      if (typeof images === 'string') {
+        updateData.images = images.split(',').filter((img: string) => img.trim().length > 0);
+      } else if (Array.isArray(images)) {
+        updateData.images = images.filter((img: string) => img.trim().length > 0);
+      }
+    }
+
+    console.log('Update data for DB:', updateData);
+
     // Обновляем оборудование
     const { data, error } = await supabase
       .from("equipment")
-      .update({
-        name: name || existingEquipment.name,
-        description: description || existingEquipment.description,
-        price: price ? parseFloat(price) : existingEquipment.price,
-        stock: stock ? parseInt(stock) : existingEquipment.stock,
-        category: category || existingEquipment.category,
-        main_image: main_image || existingEquipment.main_image,
-        images: images || existingEquipment.images,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq("id", parseInt(id))
       .select()
       .single();
