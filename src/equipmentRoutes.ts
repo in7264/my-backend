@@ -282,7 +282,6 @@ async function getDailyStats(equipmentId: number) {
 // =========================
 
 // В PUT запросе:
-// Исправленный PUT метод в equipmentRoutes.ts:
 router.put("/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
@@ -292,10 +291,13 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    let { name, description, price, stock, category, images } = req.body;
+    let { name, description, price, stock, category, images, imagesToDelete } =
+      req.body;
 
     console.log("=== UPDATE REQUEST ===");
     console.log("Equipment ID:", id);
+    console.log("Images to delete:", imagesToDelete);
+    console.log("New images:", images);
 
     // Проверяем существование оборудования
     const { data: existingEquipment, error: fetchError } = await supabase
@@ -311,7 +313,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
     console.log("Existing equipment images:", existingEquipment.images);
 
-    // Обрабатываем images
+    // Обрабатываем images - они приходят как массив
     let processedImages: string[] = [];
     if (images !== undefined && images !== null) {
       if (Array.isArray(images)) {
@@ -319,15 +321,70 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
         processedImages = images.filter((img: string) => {
           return typeof img === "string" && img.trim().length > 0;
         });
+      } else if (typeof images === "string") {
+        // Для обратной совместимости
+        processedImages = images
+          .split(",")
+          .map((img: string) => img.trim())
+          .filter((img: string) => img.length > 0);
       }
     }
 
     // Если после фильтрации нет изображений, оставляем старые
-    if (processedImages.length === 0) {
-      processedImages = existingEquipment.images || [];
+    if (processedImages.length === 0 && existingEquipment.images) {
+      processedImages = existingEquipment.images;
     }
 
     console.log("Processed images to save:", processedImages);
+
+    // Удаляем старые изображения с сервера если они есть
+    if (
+      imagesToDelete &&
+      Array.isArray(imagesToDelete) &&
+      imagesToDelete.length > 0
+    ) {
+      console.log("Starting to delete old images...");
+
+      try {
+        // Для каждого URL извлекаем имя файла и удаляем из хранилища
+        const deletePromises = imagesToDelete.map(async (imageUrl: string) => {
+          try {
+            // Извлекаем имя файла из URL
+            const urlParts = imageUrl.split("/");
+            const fileName = urlParts[urlParts.length - 1];
+
+            if (!fileName) {
+              console.warn("Could not extract filename from URL:", imageUrl);
+              return;
+            }
+
+            console.log("Deleting file:", fileName);
+
+            // Удаляем файл из Supabase Storage
+            const { error: deleteError } = await supabase.storage
+              .from("equipment-images")
+              .remove([fileName]);
+
+            if (deleteError) {
+              console.error("Error deleting file:", fileName, deleteError);
+              return;
+            }
+
+            console.log("File deleted successfully:", fileName);
+          } catch (deleteError) {
+            console.error("Error deleting image URL:", imageUrl, deleteError);
+          }
+        });
+
+        // Ждем удаления всех изображений
+        await Promise.all(deletePromises);
+        console.log("All old images deleted successfully");
+      } catch (deleteError) {
+        console.error("Error during image deletion:", deleteError);
+        // Не прерываем выполнение, если не удалось удалить старые изображения
+        // Продолжаем обновление оборудования
+      }
+    }
 
     // Записываем изменение цены в историю
     if (price && parseFloat(price) !== existingEquipment.price) {
@@ -350,13 +407,13 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     if (price !== undefined) updateData.price = parseFloat(price);
     if (stock !== undefined) updateData.stock = parseInt(stock);
     if (category !== undefined) updateData.category = category;
-    // images - всегда обновляем
+
+    // Всегда обновляем images с новым массивом
     updateData.images = processedImages;
 
     console.log("Update data for DB:", JSON.stringify(updateData, null, 2));
 
-    // ВАЖНО: Попробуем обновить без триггера
-    // Сначала отключим триггер временно (или просто обновим)
+    // Обновляем оборудование в базе данных
     const { error: updateError } = await supabase
       .from("equipment")
       .update(updateData)
@@ -431,6 +488,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       success: true,
       equipment: responseEquipment,
       message: "Оборудование успешно обновлено",
+      deletedImages: imagesToDelete || [],
     });
   } catch (error) {
     console.error("Unexpected error:", error);
