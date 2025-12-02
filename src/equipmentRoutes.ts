@@ -330,10 +330,33 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       }
     }
 
-    // Если после фильтрации нет изображений, оставляем старые
-    if (processedImages.length === 0 && existingEquipment.images) {
-      processedImages = existingEquipment.images;
+    // ==============================================
+    // ИСПРАВЛЕНИЕ: Фильтруем изображения, удаляя те, что помечены на удаление
+    // ==============================================
+    if (
+      imagesToDelete &&
+      Array.isArray(imagesToDelete) &&
+      imagesToDelete.length > 0
+    ) {
+      console.log("Filtering out images marked for deletion...");
+
+      // Удаляем из processedImages те изображения, которые помечены на удаление
+      processedImages = processedImages.filter((imgUrl: string) => {
+        const shouldKeep = !imagesToDelete.includes(imgUrl);
+        if (!shouldKeep) {
+          console.log(`Removing from processedImages: ${imgUrl}`);
+        }
+        return shouldKeep;
+      });
+
+      console.log("Images after filtering:", processedImages);
     }
+
+    // Если после фильтрации нет изображений, устанавливаем пустой массив
+    // НЕ оставляем старые изображения, если они все помечены на удаление
+    // if (processedImages.length === 0 && existingEquipment.images) {
+    //   processedImages = existingEquipment.images; // ЗАКОММЕНТИРУЙТЕ ЭТУ СТРОКУ!
+    // }
 
     console.log("Processed images to save:", processedImages);
 
@@ -343,7 +366,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       Array.isArray(imagesToDelete) &&
       imagesToDelete.length > 0
     ) {
-      console.log("Starting to delete old images...");
+      console.log("Starting to delete old images from storage...");
 
       try {
         // Для каждого URL извлекаем имя файла и удаляем из хранилища
@@ -358,7 +381,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
               return;
             }
 
-            console.log("Deleting file:", fileName);
+            console.log("Deleting file from storage:", fileName);
 
             // Удаляем файл из Supabase Storage
             const { error: deleteError } = await supabase.storage
@@ -370,7 +393,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
               return;
             }
 
-            console.log("File deleted successfully:", fileName);
+            console.log("File deleted successfully from storage:", fileName);
           } catch (deleteError) {
             console.error("Error deleting image URL:", imageUrl, deleteError);
           }
@@ -378,7 +401,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
         // Ждем удаления всех изображений
         await Promise.all(deletePromises);
-        console.log("All old images deleted successfully");
+        console.log("All old images deleted successfully from storage");
       } catch (deleteError) {
         console.error("Error during image deletion:", deleteError);
         // Не прерываем выполнение, если не удалось удалить старые изображения
