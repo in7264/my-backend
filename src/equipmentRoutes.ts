@@ -282,6 +282,7 @@ async function getDailyStats(equipmentId: number) {
 // =========================
 
 // В PUT запросе:
+// Исправленный PUT метод в equipmentRoutes.ts:
 router.put("/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
@@ -295,25 +296,6 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
     console.log("=== UPDATE REQUEST ===");
     console.log("Equipment ID:", id);
-    console.log("Received images:", images);
-    console.log("Type of images:", typeof images);
-    console.log("Is array:", Array.isArray(images));
-
-    if (Array.isArray(images)) {
-      console.log("Images array length:", images.length);
-      console.log("Images array content:", images);
-
-      // Проверяем каждый элемент массива
-      images.forEach((img, index) => {
-        console.log(`Image ${index}:`, {
-          value: img,
-          type: typeof img,
-          isString: typeof img === "string",
-          isBlob: typeof img === "string" && img.startsWith("blob:"),
-          isEmpty: typeof img === "string" && img.trim() === "",
-        });
-      });
-    }
 
     // Проверяем существование оборудования
     const { data: existingEquipment, error: fetchError } = await supabase
@@ -329,44 +311,32 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
     console.log("Existing equipment images:", existingEquipment.images);
 
-    // Обрабатываем images - фильтруем blob URLs
+    // Обрабатываем images
     let processedImages: string[] = [];
     if (images !== undefined && images !== null) {
       if (Array.isArray(images)) {
-        // Фильтруем только реальные URL (не blob)
+        // Просто используем массив как есть
         processedImages = images.filter((img: string) => {
-          const isString = typeof img === "string";
-          const hasContent = isString && img.trim().length > 0;
-          const isRealUrl =
-            isString && !img.startsWith("blob:") && !img.startsWith("data:");
-          return hasContent && isRealUrl;
+          return typeof img === "string" && img.trim().length > 0;
         });
-
-        console.log("Processed images after filtering:", processedImages);
       }
     }
 
     // Если после фильтрации нет изображений, оставляем старые
     if (processedImages.length === 0) {
       processedImages = existingEquipment.images || [];
-      console.log("Using existing images:", processedImages);
     }
+
+    console.log("Processed images to save:", processedImages);
 
     // Записываем изменение цены в историю
     if (price && parseFloat(price) !== existingEquipment.price) {
-      const { error: priceError } = await supabase
-        .from("price_history")
-        .insert({
-          equipment_id: parseInt(id),
-          old_price: existingEquipment.price,
-          new_price: parseFloat(price),
-          changed_by: req.user.id,
-        });
-
-      if (priceError) {
-        console.error("Price history error:", priceError);
-        // Не прерываем выполнение, только логируем
-      }
+      await supabase.from("price_history").insert({
+        equipment_id: parseInt(id),
+        old_price: existingEquipment.price,
+        new_price: parseFloat(price),
+        changed_by: req.user.id,
+      });
     }
 
     // Подготавливаем данные для обновления
@@ -383,9 +353,10 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     // images - всегда обновляем
     updateData.images = processedImages;
 
-    console.log("Update data for DB:", updateData);
+    console.log("Update data for DB:", JSON.stringify(updateData, null, 2));
 
-    // ВАЖНО: ВЫПОЛНЯЕМ ОБНОВЛЕНИЕ В БАЗЕ ДАННЫХ
+    // ВАЖНО: Попробуем обновить без триггера
+    // Сначала отключим триггер временно (или просто обновим)
     const { error: updateError } = await supabase
       .from("equipment")
       .update(updateData)
@@ -393,38 +364,66 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 
     if (updateError) {
       console.error("Update equipment error:", updateError);
+      console.error("Update error details:", {
+        code: updateError.code,
+        message: updateError.message,
+        details: updateError.details,
+        hint: updateError.hint,
+      });
       return res.status(500).json({ error: updateError.message });
     }
 
-    console.log("Update successful, fetching updated data...");
+    console.log("Update successful, waiting a bit...");
+    // Даем время на обновление
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
-    // После обновления получаем обновленные данные
+    // После обновления получаем обновленные данные напрямую из БД
     const { data: updatedData, error: selectError } = await supabase
       .from("equipment")
-      .select("*")
+      .select("id, name, images")
       .eq("id", parseInt(id))
       .single();
 
     if (selectError) {
       console.error("Select after update error:", selectError);
-      // Возвращаем успех даже если не можем получить обновленные данные
+    } else {
+      console.log("Direct query after update:");
+      console.log("Updated data:", updatedData);
+      console.log("Images in updated data:", updatedData.images);
+      console.log("Type of images:", typeof updatedData.images);
+      console.log("Is array:", Array.isArray(updatedData.images));
+    }
+
+    // Также попробуем получить данные через другой запрос
+    const { data: rawData } = await supabase.rpc("get_equipment_by_id", {
+      eq_id: parseInt(id),
+    });
+
+    console.log("RPC result:", rawData);
+
+    // Получаем полные данные для ответа
+    const { data: finalData, error: finalError } = await supabase
+      .from("equipment")
+      .select("*")
+      .eq("id", parseInt(id))
+      .single();
+
+    if (finalError) {
+      console.error("Final select error:", finalError);
       return res.json({
         success: true,
-        message: "Оборудование успешно обновлено (не удалось получить обновленные данные)",
+        message: "Оборудование успешно обновлено",
       });
     }
 
-    console.log("Updated data from DB:", updatedData);
-    console.log("Images in updated data:", updatedData.images);
-
     // Вычисляем main_image для ответа
     const responseEquipment = {
-      ...updatedData,
+      ...finalData,
       main_image:
-        updatedData.images &&
-        Array.isArray(updatedData.images) &&
-        updatedData.images.length > 0
-          ? updatedData.images[0]
+        finalData.images &&
+        Array.isArray(finalData.images) &&
+        finalData.images.length > 0
+          ? finalData.images[0]
           : null,
     };
 
@@ -438,7 +437,6 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
 
 // В POST запросе:
 router.post("/", async (req: AuthenticatedRequest, res) => {
