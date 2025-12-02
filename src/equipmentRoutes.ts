@@ -352,27 +352,93 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
       console.log("Using existing images:", processedImages);
     }
 
-    // ... остальная часть кода обновления ...
+    // Записываем изменение цены в историю
+    if (price && parseFloat(price) !== existingEquipment.price) {
+      const { error: priceError } = await supabase
+        .from("price_history")
+        .insert({
+          equipment_id: parseInt(id),
+          old_price: existingEquipment.price,
+          new_price: parseFloat(price),
+          changed_by: req.user.id,
+        });
 
-    // После обновления проверяем, что сохранилось
+      if (priceError) {
+        console.error("Price history error:", priceError);
+        // Не прерываем выполнение, только логируем
+      }
+    }
+
+    // Подготавливаем данные для обновления
+    const updateData: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    // Добавляем только те поля которые пришли в запросе
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (price !== undefined) updateData.price = parseFloat(price);
+    if (stock !== undefined) updateData.stock = parseInt(stock);
+    if (category !== undefined) updateData.category = category;
+    // images - всегда обновляем
+    updateData.images = processedImages;
+
+    console.log("Update data for DB:", updateData);
+
+    // ВАЖНО: ВЫПОЛНЯЕМ ОБНОВЛЕНИЕ В БАЗЕ ДАННЫХ
+    const { error: updateError } = await supabase
+      .from("equipment")
+      .update(updateData)
+      .eq("id", parseInt(id));
+
+    if (updateError) {
+      console.error("Update equipment error:", updateError);
+      return res.status(500).json({ error: updateError.message });
+    }
+
+    console.log("Update successful, fetching updated data...");
+
+    // После обновления получаем обновленные данные
     const { data: updatedData, error: selectError } = await supabase
       .from("equipment")
-      .select("images")
+      .select("*")
       .eq("id", parseInt(id))
       .single();
 
     if (selectError) {
-      console.error("Error checking update:", selectError);
-    } else {
-      console.log("Images after update in DB:", updatedData.images);
+      console.error("Select after update error:", selectError);
+      // Возвращаем успех даже если не можем получить обновленные данные
+      return res.json({
+        success: true,
+        message: "Оборудование успешно обновлено (не удалось получить обновленные данные)",
+      });
     }
 
-    // ... возвращаем ответ ...
+    console.log("Updated data from DB:", updatedData);
+    console.log("Images in updated data:", updatedData.images);
+
+    // Вычисляем main_image для ответа
+    const responseEquipment = {
+      ...updatedData,
+      main_image:
+        updatedData.images &&
+        Array.isArray(updatedData.images) &&
+        updatedData.images.length > 0
+          ? updatedData.images[0]
+          : null,
+    };
+
+    res.json({
+      success: true,
+      equipment: responseEquipment,
+      message: "Оборудование успешно обновлено",
+    });
   } catch (error) {
     console.error("Unexpected error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
 
 // В POST запросе:
 router.post("/", async (req: AuthenticatedRequest, res) => {
