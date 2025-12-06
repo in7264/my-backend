@@ -93,6 +93,9 @@ router.post("/register", async (req, res) => {
 // =========================
 //        GOOGLE CALLBACK
 // =========================
+// =========================
+//        GOOGLE CALLBACK
+// =========================
 router.post("/google/callback", async (req, res) => {
   try {
     console.log("Processing Google callback...");
@@ -117,22 +120,20 @@ router.post("/google/callback", async (req, res) => {
       return res.status(400).json({ error: "No email provided by Google" });
     }
 
-    // Ищем существующего пользователя
-    const { data: existingUser, error: findError } =
-      await supabase.auth.admin.listUsers({
-        page: 1,
-        perPage: 1,
-      });
+    let user;
+
+    // Пытаемся найти пользователя по email через Supabase Auth
+    const { data: existingUsers, error: findError } =
+      await supabase.auth.admin.listUsers();
 
     if (findError) {
       console.error("Error finding user:", findError);
+      // Если не удалось получить список пользователей, пробуем создать нового
     }
 
-    let user;
-
-    // Проверяем, есть ли пользователь с таким email
-    const userByEmail = existingUser?.users?.find(
-      (u) => u.email === userInfo.email
+    // Ищем пользователя по email в списке
+    const userByEmail = existingUsers?.users?.find(
+      (u: any) => u.email === userInfo.email
     );
 
     if (userByEmail) {
@@ -149,16 +150,19 @@ router.post("/google/callback", async (req, res) => {
         });
 
       if (updateError) {
-        throw updateError;
+        console.error("Update user error:", updateError);
+        // Если не удалось обновить, пробуем создать нового
+      } else {
+        user = updateData.user;
       }
+    }
 
-      user = updateData.user;
-    } else {
-      // Создаем нового пользователя
+    // Если пользователь не найден или не удалось обновить, создаем нового
+    if (!user) {
       const { data: signUpData, error: signUpError } =
         await supabase.auth.admin.createUser({
           email: userInfo.email,
-          email_confirm: true, // Подтверждаем email автоматически
+          email_confirm: true,
           user_metadata: {
             name: userInfo.name || userInfo.email.split("@")[0],
             avatar_url: userInfo.picture,
@@ -168,14 +172,31 @@ router.post("/google/callback", async (req, res) => {
         });
 
       if (signUpError) {
-        throw signUpError;
-      }
+        // Проверяем, не означает ли ошибка, что пользователь уже существует
+        if (signUpError.message.includes("already registered")) {
+          // Пытаемся получить пользователя через обычный метод (не admin)
+          const { data: existingUser } = await supabase.auth.signInWithPassword(
+            {
+              email: userInfo.email,
+              password: "temporary_password", // Для Google-пользователей пароль не используется
+            }
+          );
 
-      user = signUpData.user;
+          if (existingUser?.user) {
+            user = existingUser.user;
+          } else {
+            throw new Error("User exists but cannot be accessed");
+          }
+        } else {
+          throw signUpError;
+        }
+      } else {
+        user = signUpData.user;
+      }
     }
 
     if (!user) {
-      throw new Error("Failed to create/update user");
+      throw new Error("Failed to create or find user");
     }
 
     console.log("User processed:", {
@@ -187,8 +208,8 @@ router.post("/google/callback", async (req, res) => {
     // Создаем JWT токен сессии
     const userData = {
       id: user.id,
-      email: user.email,
-      name: user.user_metadata?.name || user.email?.split("@")[0],
+      email: user.email!,
+      name: user.user_metadata?.name || user.email?.split("@")[0] || "User",
       role: user.role || "authenticated",
       avatar: user.user_metadata?.avatar_url,
     };
