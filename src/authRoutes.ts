@@ -114,14 +114,15 @@ router.post("/reset", async (req, res) => {
 // =========================
 router.get("/google", async (req, res) => {
   try {
+    console.log("Starting Google OAuth flow...");
+
+    // ИСПРАВЛЕНИЕ: Используем правильные параметры для OAuth
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: `${process.env.BACKEND_URL}/auth/callback`,
-        queryParams: {
-          access_type: "offline",
-          prompt: "consent",
-        },
+        // Убираем queryParams которые могут мешать
+        // skipBrowserRedirect: false, // Не используем для web flow
       },
     });
 
@@ -152,9 +153,8 @@ router.get("/google", async (req, res) => {
 router.get("/callback", async (req, res) => {
   console.log("=== GOOGLE CALLBACK STARTED ===");
   console.log("Query params:", req.query);
-  console.log("Headers:", req.headers);
+  console.log("Code received:", req.query.code ? "YES" : "NO");
 
-  const token_hash = req.query.token_hash as string;
   const code = req.query.code as string;
   const error = req.query.error as string;
 
@@ -166,12 +166,23 @@ router.get("/callback", async (req, res) => {
     );
   }
 
-  console.log("Google callback received:", { token_hash, code, error });
+  if (!code) {
+    console.error("No code received from Google");
+    return res.redirect(
+      `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
+        "No authorization code received"
+      )}`
+    );
+  }
+
+  console.log("Processing Google OAuth code...");
 
   try {
-    // Обмен кода на сессию
+    // ИСПРАВЛЕНИЕ: Правильный обмен кода на сессию
+    console.log("Exchanging code for session...");
+
     const { data, error: exchangeError } =
-      await supabase.auth.exchangeCodeForSession(code || token_hash);
+      await supabase.auth.exchangeCodeForSession(code);
 
     if (exchangeError) {
       console.error("Exchange code error:", exchangeError);
@@ -182,20 +193,26 @@ router.get("/callback", async (req, res) => {
       );
     }
 
-    console.log("Session data:", data);
+    console.log("Session exchange successful");
+    console.log("Session data:", {
+      user: data.session?.user?.email,
+      access_token: data.session?.access_token ? "PRESENT" : "MISSING",
+    });
 
     if (!data?.session?.user) {
       console.error("No user in session data");
       return res.redirect(
-        `${process.env.CLIENT_URL}/login?error=No user found in session`
+        `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
+          "No user found in session"
+        )}`
       );
     }
 
     const user = data.session.user;
-    console.log("Google user details:", {
+    console.log("Google user authenticated:", {
       id: user.id,
       email: user.email,
-      metadata: user.user_metadata,
+      name: user.user_metadata?.name || user.user_metadata?.full_name,
     });
 
     // Проверяем, существует ли профиль
@@ -229,23 +246,14 @@ router.get("/callback", async (req, res) => {
 
       if (insertError) {
         console.error("Profile creation error:", insertError);
-        return res.redirect(
-          `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
-            "Cannot create profile"
-          )}`
-        );
+        // Не останавливаем процесс, можно продолжить без профиля
+        profile = null;
+      } else {
+        profile = newProfile;
       }
-
-      profile = newProfile;
     } else if (profileError) {
       console.error("Profile fetch error:", profileError);
-      return res.redirect(
-        `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
-          profileError.message
-        )}`
-      );
-    } else {
-      console.log("Profile already exists:", profile.email);
+      profile = null;
     }
 
     // Создаем JWT токен
@@ -259,17 +267,13 @@ router.get("/callback", async (req, res) => {
     // Устанавливаем куки
     setSessionCookie(res, token);
 
+    console.log("JWT token created and cookie set");
     console.log("Success! Redirecting to:", process.env.CLIENT_URL);
 
-    // Редирект на клиент с возможным токеном в query для SPA
-    const redirectUrl = new URL(
-      process.env.CLIENT_URL || "http://localhost:5173"
-    );
-    redirectUrl.searchParams.set("google_auth", "success");
-
-    res.redirect(redirectUrl.toString());
+    // Редирект на клиент
+    res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
   } catch (error) {
-    console.error("Callback error:", error);
+    console.error("Callback error details:", error);
     res.redirect(
       `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
         "Internal server error during OAuth callback"
@@ -277,7 +281,6 @@ router.get("/callback", async (req, res) => {
     );
   }
 });
-
 // =========================
 //      CHECK SESSION
 // =========================
