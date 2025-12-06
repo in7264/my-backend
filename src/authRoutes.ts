@@ -95,107 +95,124 @@ router.post("/register", async (req, res) => {
 // =========================
 router.post("/google/callback", async (req, res) => {
   try {
-    console.log("Processing Google callback from frontend...");
+    console.log("Processing Google callback...");
 
-    const { access_token, refresh_token, expires_at, provider_token } =
-      req.body;
+    const { googleAccessToken, userInfo } = req.body;
 
-    console.log("Received tokens:", {
-      hasAccessToken: !!access_token,
-      hasRefreshToken: !!refresh_token,
-      hasProviderToken: !!provider_token,
-    });
-
-    if (!access_token || !refresh_token) {
-      console.error("Missing required tokens");
-      return res.status(400).json({ error: "Missing required tokens" });
+    if (!googleAccessToken || !userInfo) {
+      return res.status(400).json({ error: "Missing required data" });
     }
 
-    // Устанавливаем сессию в Supabase
-    const {
-      data: { session, user },
-      error,
-    } = await supabase.auth.setSession({
-      access_token,
-      refresh_token,
-    });
+    // Проверяем токен Google
+    const googleResponse = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?access_token=${googleAccessToken}`
+    );
 
-    if (error) {
-      console.error("Supabase setSession error:", error);
-      return res.status(401).json({ error: error.message });
+    if (!googleResponse.ok) {
+      return res.status(401).json({ error: "Invalid Google token" });
+    }
+
+    // Проверяем email
+    if (!userInfo.email) {
+      return res.status(400).json({ error: "No email provided by Google" });
+    }
+
+    // Ищем существующего пользователя
+    const { data: existingUser, error: findError } =
+      await supabase.auth.admin.listUsers({
+        page: 1,
+        perPage: 1,
+      });
+
+    if (findError) {
+      console.error("Error finding user:", findError);
+    }
+
+    let user;
+
+    // Проверяем, есть ли пользователь с таким email
+    const userByEmail = existingUser?.users?.find(
+      (u) => u.email === userInfo.email
+    );
+
+    if (userByEmail) {
+      // Пользователь существует - обновляем данные
+      const { data: updateData, error: updateError } =
+        await supabase.auth.admin.updateUserById(userByEmail.id, {
+          email: userInfo.email,
+          user_metadata: {
+            name: userInfo.name || userByEmail.user_metadata?.name,
+            avatar_url:
+              userInfo.picture || userByEmail.user_metadata?.avatar_url,
+            full_name: userInfo.name || userByEmail.user_metadata?.full_name,
+          },
+        });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      user = updateData.user;
+    } else {
+      // Создаем нового пользователя
+      const { data: signUpData, error: signUpError } =
+        await supabase.auth.admin.createUser({
+          email: userInfo.email,
+          email_confirm: true, // Подтверждаем email автоматически
+          user_metadata: {
+            name: userInfo.name || userInfo.email.split("@")[0],
+            avatar_url: userInfo.picture,
+            full_name: userInfo.name,
+            provider: "google",
+          },
+        });
+
+      if (signUpError) {
+        throw signUpError;
+      }
+
+      user = signUpData.user;
     }
 
     if (!user) {
-      console.error("No user after setting session");
-      return res.status(401).json({ error: "Authentication failed - no user" });
+      throw new Error("Failed to create/update user");
     }
 
-    console.log("User authenticated:", {
+    console.log("User processed:", {
       id: user.id,
       email: user.email,
       name: user.user_metadata?.name,
-      role: user.role,
     });
 
-    // Получаем данные пользователя из auth.users
+    // Создаем JWT токен сессии
     const userData = {
       id: user.id,
       email: user.email,
-      name:
-        user.user_metadata?.full_name ||
-        user.user_metadata?.name ||
-        user.email?.split("@")[0],
+      name: user.user_metadata?.name || user.email?.split("@")[0],
       role: user.role || "authenticated",
       avatar: user.user_metadata?.avatar_url,
     };
 
-    // Создаем наш JWT токен
     const token = createSessionToken(userData);
-
-    // Устанавливаем куки
     setSessionCookie(res, token);
 
-    console.log("JWT cookie set, responding with success");
+    // Получаем данные пользователя
+    const [favoritesResult, cartResult] = await Promise.allSettled([
+      supabase.from("favorites").select("*").eq("user_id", user.id),
+      supabase.from("cart_items").select("*").eq("user_id", user.id),
+    ]);
 
-    // Пытаемся получить данные пользователя (favorites и cart_items)
-    try {
-      const [favoritesResult, cartResult] = await Promise.allSettled([
-        supabase.from("favorites").select("*").eq("user_id", user.id),
-        supabase.from("cart_items").select("*").eq("user_id", user.id),
-      ]);
-
-      const favorites =
+    res.json({
+      success: true,
+      user: userData,
+      favorites:
         favoritesResult.status === "fulfilled"
           ? favoritesResult.value.data
-          : [];
-      const cart =
-        cartResult.status === "fulfilled" ? cartResult.value.data : [];
-
-      if (favoritesResult.status === "rejected") {
-        console.warn("Failed to fetch favorites:", favoritesResult.reason);
-      }
-      if (cartResult.status === "rejected") {
-        console.warn("Failed to fetch cart items:", cartResult.reason);
-      }
-
-      res.json({
-        success: true,
-        user: userData,
-        favorites: favorites || [],
-        cart: cart || [],
-      });
-    } catch (fetchError) {
-      console.error("Error fetching user data:", fetchError);
-      // Все равно возвращаем успешную аутентификацию
-      res.json({
-        success: true,
-        user: userData,
-        favorites: [],
-        cart: [],
-      });
-    }
+          : [],
+      cart: cartResult.status === "fulfilled" ? cartResult.value.data : [],
+    });
   } catch (error) {
-    console.error("Google callback processing error:", error);
+    console.error("Google callback error:", error);
     res.status(500).json({
       error: "Internal server error",
       details: error instanceof Error ? error.message : "Unknown error",
