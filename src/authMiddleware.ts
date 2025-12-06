@@ -1,76 +1,121 @@
-import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { Request, Response, NextFunction } from "express";
+
+const JWT_SECRET = process.env.JWT_SECRET!;
 
 export interface AuthenticatedRequest extends Request {
   user?: {
     id: string;
     email: string;
     role: string;
+    name?: string;
+    avatar?: string;
   };
 }
 
-// ===== Helper: create JWT =====
-export function createSessionToken(user: any) {
+export const createSessionToken = (user: {
+  id: string;
+  email: string;
+  role: string;
+  name?: string;
+  avatar?: string;
+}) => {
   return jwt.sign(
     {
-      id: user.id,
+      sub: user.id,
       email: user.email,
-      role: user.role,
+      role: user.role || "authenticated",
+      name: user.name,
+      avatar: user.avatar,
     },
-    process.env.JWT_SECRET!,
+    JWT_SECRET,
     { expiresIn: "7d" }
   );
-}
+};
 
-// ===== Helper: verify JWT =====
-export function verifySessionToken(token: string) {
+export const verifySessionToken = (token: string) => {
   try {
-    return jwt.verify(token, process.env.JWT_SECRET!);
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    return {
+      id: decoded.sub,
+      email: decoded.email,
+      role: decoded.role || "authenticated",
+      name: decoded.name,
+      avatar: decoded.avatar,
+    };
   } catch (error) {
+    console.error("Token verification error:", error);
     return null;
   }
-}
+};
 
-// ===== Helper: set cookie =====
-export function setSessionCookie(res: Response, token: string) {
+export const setSessionCookie = (res: Response, token: string) => {
   res.cookie("session", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней
     path: "/",
   });
-}
+};
 
-// ===== Middleware =====
 export const authMiddleware = (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    // Получаем токен из куки
     const token = req.cookies.session;
 
     if (!token) {
-      return next(); // Продолжаем без пользователя
+      return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // Верифицируем токен
-    const decoded = verifySessionToken(token);
+    const user = verifySessionToken(token);
 
-    if (decoded && typeof decoded !== "string") {
-      req.user = {
-        id: decoded.id,
-        email: decoded.email,
-        role: decoded.role,
-      };
+    if (!user) {
+      return res.status(401).json({ error: "Invalid token" });
     }
 
+    req.user = user;
     next();
   } catch (error) {
     console.error("Auth middleware error:", error);
-    next(); // Продолжаем без пользователя в случае ошибки
+    res.status(401).json({ error: "Authentication failed" });
+  }
+};
+
+// Middleware для проверки админских прав
+export const adminMiddleware = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const token = req.cookies.session;
+
+    if (!token) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const user = verifySessionToken(token);
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
+    // Проверяем роль администратора
+    if (user.role !== "service_role" && user.role !== "supabase_admin") {
+      return res
+        .status(403)
+        .json({ error: "Forbidden: Admin access required" });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error("Admin middleware error:", error);
+    res.status(401).json({ error: "Authentication failed" });
   }
 };
 
