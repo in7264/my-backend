@@ -116,13 +116,14 @@ router.get("/google", async (req, res) => {
   try {
     console.log("Starting Google OAuth flow...");
 
-    // ИСПРАВЛЕНИЕ: Используем правильные параметры для OAuth
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${process.env.BACKEND_URL}/auth/callback`,
-        // Убираем queryParams которые могут мешать
-        // skipBrowserRedirect: false, // Не используем для web flow
+        redirectTo: `${process.env.CLIENT_URL}/auth/callback`,
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
       },
     });
 
@@ -131,7 +132,6 @@ router.get("/google", async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
-    // Проверяем что есть URL для редиректа
     if (!data?.url) {
       console.error("No redirect URL from Google OAuth");
       return res
@@ -150,69 +150,47 @@ router.get("/google", async (req, res) => {
 // =========================
 //     GOOGLE CALLBACK
 // =========================
-router.get("/callback", async (req, res) => {
-  console.log("=== GOOGLE CALLBACK STARTED ===");
-  console.log("Query params:", req.query);
-  console.log("Code received:", req.query.code ? "YES" : "NO");
-
-  const code = req.query.code as string;
-  const error = req.query.error as string;
-
-  // Проверяем на ошибки от Google
-  if (error) {
-    console.error("Google OAuth error:", error);
-    return res.redirect(
-      `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(error)}`
-    );
-  }
-
-  if (!code) {
-    console.error("No code received from Google");
-    return res.redirect(
-      `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
-        "No authorization code received"
-      )}`
-    );
-  }
-
-  console.log("Processing Google OAuth code...");
-
+router.post("/google/callback", async (req, res) => {
   try {
-    // ИСПРАВЛЕНИЕ: Правильный обмен кода на сессию
-    console.log("Exchanging code for session...");
+    console.log("Processing Google callback from frontend...");
 
-    const { data, error: exchangeError } =
-      await supabase.auth.exchangeCodeForSession(code);
+    const { access_token, refresh_token, expires_at, provider_token } =
+      req.body;
 
-    if (exchangeError) {
-      console.error("Exchange code error:", exchangeError);
-      return res.redirect(
-        `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
-          exchangeError.message
-        )}`
-      );
-    }
-
-    console.log("Session exchange successful");
-    console.log("Session data:", {
-      user: data.session?.user?.email,
-      access_token: data.session?.access_token ? "PRESENT" : "MISSING",
+    console.log("Received tokens:", {
+      hasAccessToken: !!access_token,
+      hasRefreshToken: !!refresh_token,
+      hasProviderToken: !!provider_token,
     });
 
-    if (!data?.session?.user) {
-      console.error("No user in session data");
-      return res.redirect(
-        `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
-          "No user found in session"
-        )}`
-      );
+    if (!access_token || !refresh_token) {
+      console.error("Missing required tokens");
+      return res.status(400).json({ error: "Missing required tokens" });
     }
 
-    const user = data.session.user;
-    console.log("Google user authenticated:", {
+    // Устанавливаем сессию в Supabase
+    const {
+      data: { session, user },
+      error,
+    } = await supabase.auth.setSession({
+      access_token,
+      refresh_token,
+    });
+
+    if (error) {
+      console.error("Supabase setSession error:", error);
+      return res.status(401).json({ error: error.message });
+    }
+
+    if (!user) {
+      console.error("No user after setting session");
+      return res.status(401).json({ error: "Authentication failed - no user" });
+    }
+
+    console.log("User authenticated:", {
       id: user.id,
       email: user.email,
-      name: user.user_metadata?.name || user.user_metadata?.full_name,
+      name: user.user_metadata?.name,
     });
 
     // Проверяем, существует ли профиль
@@ -225,7 +203,7 @@ router.get("/callback", async (req, res) => {
     // Если профиля нет — создаем
     if (profileError && profileError.code === "PGRST116") {
       // No rows returned
-      console.log("Creating new profile for user:", user.email);
+      console.log("Creating new profile for Google user:", user.email);
 
       const { data: newProfile, error: insertError } = await supabase
         .from("profiles")
@@ -246,17 +224,20 @@ router.get("/callback", async (req, res) => {
 
       if (insertError) {
         console.error("Profile creation error:", insertError);
-        // Не останавливаем процесс, можно продолжить без профиля
+        // Продолжаем без профиля
         profile = null;
       } else {
         profile = newProfile;
+        console.log("Profile created successfully");
       }
     } else if (profileError) {
       console.error("Profile fetch error:", profileError);
       profile = null;
+    } else {
+      console.log("Existing profile found:", profile.email);
     }
 
-    // Создаем JWT токен
+    // Создаем наш JWT токен
     const token = createSessionToken({
       id: user.id,
       email: user.email,
@@ -267,18 +248,23 @@ router.get("/callback", async (req, res) => {
     // Устанавливаем куки
     setSessionCookie(res, token);
 
-    console.log("JWT token created and cookie set");
-    console.log("Success! Redirecting to:", process.env.CLIENT_URL);
+    console.log("JWT cookie set, responding with success");
 
-    // Редирект на клиент
-    res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: profile?.role || "user",
+        name: profile?.name || user.user_metadata?.name,
+      },
+    });
   } catch (error) {
-    console.error("Callback error details:", error);
-    res.redirect(
-      `${process.env.CLIENT_URL}/login?error=${encodeURIComponent(
-        "Internal server error during OAuth callback"
-      )}`
-    );
+    console.error("Google callback processing error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
   }
 });
 // =========================
