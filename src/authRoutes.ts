@@ -1,37 +1,29 @@
 import express from "express";
-import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
 import { supabase } from "./supabase";
+import crypto from "crypto";
+import {
+  createSessionToken,
+  setSessionCookie,
+  verifySessionToken,
+  AuthenticatedRequest,
+} from "./authMiddleware";
 
 const router = express.Router();
 router.use(cookieParser());
 
-router.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
-});
+// ===== Helper: generate PKCE code verifier and challenge =====
+function generatePKCE() {
+  const codeVerifier = crypto.randomBytes(32).toString("hex");
+  const codeChallenge = crypto
+    .createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
 
-// ===== Helper: create JWT =====
-function createSessionToken(user: any) {
-  return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    },
-    process.env.JWT_SECRET!,
-    { expiresIn: "7d" }
-  );
-}
-
-// ===== Helper: set cookie =====
-function setSessionCookie(res: any, token: string) {
-  res.cookie("session", token, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "none",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  return { codeVerifier, codeChallenge };
 }
 
 // =========================
@@ -60,7 +52,7 @@ router.post("/login", async (req, res) => {
     const userData = {
       id: authData.user.id,
       email: authData.user.email,
-      role: authData.user.role || "user", // Используем поле role из auth.users если есть
+      role: authData.user.role || "user",
     };
 
     // Создаем JWT токен
@@ -246,10 +238,16 @@ router.get("/check", (req, res) => {
     const token = req.cookies.session;
     if (!token) return res.json({ authorized: false });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!);
+    // Используйте verifySessionToken вместо прямого использования jwt
+    const decoded = verifySessionToken(token);
 
-    res.json({ authorized: true, user: decoded });
-  } catch {
+    if (decoded) {
+      res.json({ authorized: true, user: decoded });
+    } else {
+      res.json({ authorized: false });
+    }
+  } catch (error) {
+    console.error("Check session error:", error);
     res.json({ authorized: false });
   }
 });
@@ -258,7 +256,12 @@ router.get("/check", (req, res) => {
 //          LOGOUT
 // =========================
 router.get("/logout", (req, res) => {
-  res.clearCookie("session", { secure: true, sameSite: "none" });
+  res.clearCookie("session", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/",
+  });
   res.json({ message: "Logged out" });
 });
 

@@ -9,7 +9,7 @@ import userRoutes from "./userRoutes";
 
 const app = express();
 
-app.use(express.json({ limit: "10mb" })); // Увеличьте до 10MB
+app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 app.set("trust proxy", true);
@@ -24,14 +24,18 @@ app.use(
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["Set-Cookie"],
   })
 );
 app.use(express.json());
 app.use(cookieParser());
 
+// Публичные маршруты
 app.use("/auth", authRoutes);
 app.use("/equipment", equipmentRoutes);
 app.use("/analytics", analyticsRoutes);
+
+// Защищенные маршруты
 app.use("/user", authMiddleware, userRoutes);
 
 app.options("*", cors());

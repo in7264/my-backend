@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "./supabase";
-import { AuthenticatedRequest } from "./authMiddleware";
+import { AuthenticatedRequest, requireAuth } from "./authMiddleware";
 
 const router = express.Router();
 
@@ -11,6 +11,7 @@ const router = express.Router();
 // Добавить в избранное
 router.post(
   "/favorites/:equipmentId",
+  requireAuth,
   async (req: AuthenticatedRequest, res) => {
     try {
       const { equipmentId } = req.params;
@@ -50,6 +51,7 @@ router.post(
 // Удалить из избранного
 router.delete(
   "/favorites/:equipmentId",
+  requireAuth,
   async (req: AuthenticatedRequest, res) => {
     try {
       const { equipmentId } = req.params;
@@ -79,54 +81,59 @@ router.delete(
 );
 
 // Получить избранное пользователя
-router.get("/favorites", async (req: AuthenticatedRequest, res) => {
-  try {
-    const userId = req.user?.id;
+router.get(
+  "/favorites",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id;
 
-    if (!userId) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
 
-    const { data, error } = await supabase
-      .from("favorites")
-      .select(
-        `
+      const { data, error } = await supabase
+        .from("favorites")
+        .select(
+          `
         *,
         equipment:equipment_id (*)
       `
-      )
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
+        )
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("Get favorites error:", error);
-      return res.status(500).json({ error: error.message });
+      if (error) {
+        console.error("Get favorites error:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      // Добавляем вычисление main_image если его нет
+      const favorites = (data || []).map((fav) => ({
+        ...fav,
+        equipment: {
+          ...fav.equipment,
+          main_image:
+            fav.equipment.main_image ||
+            (Array.isArray(fav.equipment.images) &&
+            fav.equipment.images.length > 0
+              ? fav.equipment.images[0]
+              : null),
+        },
+      }));
+
+      res.json({ favorites });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    // Добавляем вычисление main_image если его нет
-    const favorites = (data || []).map((fav) => ({
-      ...fav,
-      equipment: {
-        ...fav.equipment,
-        main_image:
-          fav.equipment.main_image ||
-          (Array.isArray(fav.equipment.images) &&
-          fav.equipment.images.length > 0
-            ? fav.equipment.images[0]
-            : null),
-      },
-    }));
-
-    res.json({ favorites });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
-});
+);
 
 // Проверить, есть ли товар в избранном
 router.get(
   "/favorites/:equipmentId/check",
+  requireAuth,
   async (req: AuthenticatedRequest, res) => {
     try {
       const { equipmentId } = req.params;
@@ -162,84 +169,147 @@ router.get(
 // =========================
 
 // Добавить в корзину
-router.post("/cart/:equipmentId", async (req: AuthenticatedRequest, res) => {
-  try {
-    const { equipmentId } = req.params;
-    const { quantity = 1 } = req.body;
-    const userId = req.user?.id;
+router.post(
+  "/cart/:equipmentId",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { equipmentId } = req.params;
+      const { quantity = 1 } = req.body;
+      const userId = req.user?.id;
 
-    if (!userId) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
 
-    // Проверяем есть ли уже в корзине
-    const { data: existingItem } = await supabase
-      .from("cart_items")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("equipment_id", parseInt(equipmentId))
-      .single();
-
-    let result;
-    if (existingItem) {
-      // Обновляем количество
-      result = await supabase
+      // Проверяем есть ли уже в корзине
+      const { data: existingItem } = await supabase
         .from("cart_items")
-        .update({
-          quantity: existingItem.quantity + quantity,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingItem.id)
-        .select(
-          `
+        .select("*")
+        .eq("user_id", userId)
+        .eq("equipment_id", parseInt(equipmentId))
+        .single();
+
+      let result;
+      if (existingItem) {
+        // Обновляем количество
+        result = await supabase
+          .from("cart_items")
+          .update({
+            quantity: existingItem.quantity + quantity,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingItem.id)
+          .select(
+            `
           *,
           equipment:equipment_id (*)
         `
-        )
-        .single();
-    } else {
-      // Добавляем новый товар
-      result = await supabase
-        .from("cart_items")
-        .insert({
-          user_id: userId,
-          equipment_id: parseInt(equipmentId),
-          quantity: quantity,
-        })
-        .select(
-          `
+          )
+          .single();
+      } else {
+        // Добавляем новый товар
+        result = await supabase
+          .from("cart_items")
+          .insert({
+            user_id: userId,
+            equipment_id: parseInt(equipmentId),
+            quantity: quantity,
+          })
+          .select(
+            `
           *,
           equipment:equipment_id (*)
         `
-        )
-        .single();
-    }
+          )
+          .single();
+      }
 
-    if (result.error) {
-      console.error("Add to cart error:", result.error);
-      return res.status(500).json({ error: result.error.message });
-    }
+      if (result.error) {
+        console.error("Add to cart error:", result.error);
+        return res.status(500).json({ error: result.error.message });
+      }
 
-    res.json({ success: true, cartItem: result.data });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
+      res.json({ success: true, cartItem: result.data });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
   }
-});
+);
 
 // Обновить количество в корзине
-router.put("/cart/:equipmentId", async (req: AuthenticatedRequest, res) => {
-  try {
-    const { equipmentId } = req.params;
-    const { quantity } = req.body;
-    const userId = req.user?.id;
+router.put(
+  "/cart/:equipmentId",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { equipmentId } = req.params;
+      const { quantity } = req.body;
+      const userId = req.user?.id;
 
-    if (!userId) {
-      return res.status(401).json({ error: "Not authenticated" });
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      if (quantity <= 0) {
+        // Если количество 0 или меньше, удаляем товар
+        const { error } = await supabase
+          .from("cart_items")
+          .delete()
+          .eq("user_id", userId)
+          .eq("equipment_id", parseInt(equipmentId));
+
+        if (error) {
+          console.error("Remove from cart error:", error);
+          return res.status(500).json({ error: error.message });
+        }
+
+        return res.json({ success: true, removed: true });
+      }
+
+      const { data, error } = await supabase
+        .from("cart_items")
+        .update({
+          quantity: quantity,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId)
+        .eq("equipment_id", parseInt(equipmentId))
+        .select(
+          `
+        *,
+        equipment:equipment_id (*)
+      `
+        )
+        .single();
+
+      if (error) {
+        console.error("Update cart error:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      res.json({ success: true, cartItem: data });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
+  }
+);
 
-    if (quantity <= 0) {
-      // Если количество 0 или меньше, удаляем товар
+// Удалить из корзины
+router.delete(
+  "/cart/:equipmentId",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { equipmentId } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
       const { error } = await supabase
         .from("cart_items")
         .delete()
@@ -251,67 +321,16 @@ router.put("/cart/:equipmentId", async (req: AuthenticatedRequest, res) => {
         return res.status(500).json({ error: error.message });
       }
 
-      return res.json({ success: true, removed: true });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    const { data, error } = await supabase
-      .from("cart_items")
-      .update({
-        quantity: quantity,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", userId)
-      .eq("equipment_id", parseInt(equipmentId))
-      .select(
-        `
-        *,
-        equipment:equipment_id (*)
-      `
-      )
-      .single();
-
-    if (error) {
-      console.error("Update cart error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json({ success: true, cartItem: data });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
-});
-
-// Удалить из корзины
-router.delete("/cart/:equipmentId", async (req: AuthenticatedRequest, res) => {
-  try {
-    const { equipmentId } = req.params;
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
-
-    const { error } = await supabase
-      .from("cart_items")
-      .delete()
-      .eq("user_id", userId)
-      .eq("equipment_id", parseInt(equipmentId));
-
-    if (error) {
-      console.error("Remove from cart error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+);
 
 // Получить корзину пользователя
-router.get("/cart", async (req: AuthenticatedRequest, res) => {
+router.get("/cart", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.user?.id;
 
@@ -367,7 +386,7 @@ router.get("/cart", async (req: AuthenticatedRequest, res) => {
 });
 
 // Очистить корзину
-router.delete("/cart", async (req: AuthenticatedRequest, res) => {
+router.delete("/cart", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.user?.id;
 

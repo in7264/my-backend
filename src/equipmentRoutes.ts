@@ -1,7 +1,12 @@
 import express from "express";
 import { supabasePublic } from "./supabasePublic";
 import { supabase } from "./supabase";
-import { authMiddleware, AuthenticatedRequest } from "./authMiddleware"; // Добавьте импорт
+import {
+  authMiddleware,
+  AuthenticatedRequest,
+  requireAuth,
+  requireAdmin,
+} from "./authMiddleware"; // Добавьте импорт
 
 const router = express.Router();
 
@@ -160,107 +165,115 @@ router.get("/:id", async (req, res) => {
 });
 
 // Отслеживание просмотра товара
-router.post("/:id/view", async (req: AuthenticatedRequest, res) => {
-  try {
-    const { id } = req.params;
-    const user_id = req.user?.id;
+router.post(
+  "/:id/view",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const user_id = req.user?.id;
 
-    // Получаем реальный IP-адрес
-    const ip_address =
-      (req.headers["x-forwarded-for"] as string) ||
-      req.socket.remoteAddress ||
-      "::1";
-    // Убираем порт если есть
-    const clean_ip = ip_address.split(":")[0];
+      // Получаем реальный IP-адрес
+      const ip_address =
+        (req.headers["x-forwarded-for"] as string) ||
+        req.socket.remoteAddress ||
+        "::1";
+      // Убираем порт если есть
+      const clean_ip = ip_address.split(":")[0];
 
-    const user_agent = req.get("User-Agent");
+      const user_agent = req.get("User-Agent");
 
-    // Проверяем существование товара
-    const { data: equipment, error: equipmentError } = await supabase
-      .from("equipment")
-      .select("id")
-      .eq("id", parseInt(id))
-      .single();
+      // Проверяем существование товара
+      const { data: equipment, error: equipmentError } = await supabase
+        .from("equipment")
+        .select("id")
+        .eq("id", parseInt(id))
+        .single();
 
-    if (equipmentError || !equipment) {
-      return res.status(404).json({ error: "Equipment not found" });
-    }
-
-    // Детальный лог просмотра
-    const { error: viewError } = await supabase.from("product_views").insert({
-      equipment_id: parseInt(id),
-      user_id: user_id || null,
-      ip_address: clean_ip,
-      user_agent,
-    });
-
-    if (viewError) {
-      console.error("View tracking error:", viewError);
-      return res.status(500).json({ error: viewError.message });
-    }
-
-    // Обновляем счетчик просмотров
-    const { error: updateError } = await supabase.rpc(
-      "increment_equipment_views",
-      {
-        equipment_id: parseInt(id),
+      if (equipmentError || !equipment) {
+        return res.status(404).json({ error: "Equipment not found" });
       }
-    );
 
-    if (updateError) {
-      console.error("Update views count error:", updateError);
+      // Детальный лог просмотра
+      const { error: viewError } = await supabase.from("product_views").insert({
+        equipment_id: parseInt(id),
+        user_id: user_id || null,
+        ip_address: clean_ip,
+        user_agent,
+      });
+
+      if (viewError) {
+        console.error("View tracking error:", viewError);
+        return res.status(500).json({ error: viewError.message });
+      }
+
+      // Обновляем счетчик просмотров
+      const { error: updateError } = await supabase.rpc(
+        "increment_equipment_views",
+        {
+          equipment_id: parseInt(id),
+        }
+      );
+
+      if (updateError) {
+        console.error("Update views count error:", updateError);
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Unexpected error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
-});
+);
 
 // Получение статистики по конкретному товару
-router.get("/:id/stats", async (req: AuthenticatedRequest, res) => {
-  // Используйте AuthenticatedRequest
-  try {
-    const { id } = req.params;
+router.get(
+  "/:id/stats",
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    // Используйте AuthenticatedRequest
+    try {
+      const { id } = req.params;
 
-    // Проверяем права доступа - только админы могут смотреть статистику
-    if (!req.user || req.user.role !== "supabase_admin") {
-      return res.status(403).json({ error: "Access denied" });
+      // Проверяем права доступа - только админы могут смотреть статистику
+      if (!req.user || req.user.role !== "supabase_admin") {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const [
+        { data: equipmentData },
+        { data: viewsData },
+        { data: ordersData },
+        { data: priceHistory },
+      ] = await Promise.all([
+        supabase.from("equipment").select("*").eq("id", id).single(),
+        supabase.from("product_views").select("*").eq("equipment_id", id),
+        supabase.from("orders").select("*").eq("equipment_id", id),
+        supabase
+          .from("price_history")
+          .select("*")
+          .eq("equipment_id", id)
+          .order("changed_at", { ascending: false }),
+      ]);
+
+      const stats = {
+        equipment: equipmentData,
+        total_views: viewsData?.length || 0,
+        total_orders:
+          ordersData?.reduce((sum, order) => sum + order.quantity, 0) || 0,
+        recent_views: viewsData?.slice(0, 10) || [],
+        price_history: priceHistory || [],
+        daily_stats: await getDailyStats(parseInt(id)),
+      };
+
+      res.json(stats);
+    } catch (error) {
+      console.error("Stats error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    const [
-      { data: equipmentData },
-      { data: viewsData },
-      { data: ordersData },
-      { data: priceHistory },
-    ] = await Promise.all([
-      supabase.from("equipment").select("*").eq("id", id).single(),
-      supabase.from("product_views").select("*").eq("equipment_id", id),
-      supabase.from("orders").select("*").eq("equipment_id", id),
-      supabase
-        .from("price_history")
-        .select("*")
-        .eq("equipment_id", id)
-        .order("changed_at", { ascending: false }),
-    ]);
-
-    const stats = {
-      equipment: equipmentData,
-      total_views: viewsData?.length || 0,
-      total_orders:
-        ordersData?.reduce((sum, order) => sum + order.quantity, 0) || 0,
-      recent_views: viewsData?.slice(0, 10) || [],
-      price_history: priceHistory || [],
-      daily_stats: await getDailyStats(parseInt(id)),
-    };
-
-    res.json(stats);
-  } catch (error) {
-    console.error("Stats error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
-});
+);
 
 // Функция для получения ежедневной статистики
 async function getDailyStats(equipmentId: number) {
@@ -282,7 +295,7 @@ async function getDailyStats(equipmentId: number) {
 // =========================
 
 // В PUT запросе:
-router.put("/:id", async (req: AuthenticatedRequest, res) => {
+router.put("/:id", requireAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -520,7 +533,7 @@ router.put("/:id", async (req: AuthenticatedRequest, res) => {
 });
 
 // В POST запросе:
-router.post("/", async (req: AuthenticatedRequest, res) => {
+router.post("/", requireAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     // Проверяем права доступа - только админы
     if (!req.user || req.user.role !== "supabase_admin") {
@@ -592,7 +605,7 @@ router.post("/", async (req: AuthenticatedRequest, res) => {
 });
 
 // Удалить оборудование
-router.delete("/:id", async (req: AuthenticatedRequest, res) => {
+router.delete("/:id", requireAdmin, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
 
