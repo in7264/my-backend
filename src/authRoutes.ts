@@ -6,6 +6,11 @@ import { supabase } from "./supabase";
 const router = express.Router();
 router.use(cookieParser());
 
+router.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
 // ===== Helper: create JWT =====
 function createSessionToken(user: any) {
   return jwt.sign(
@@ -38,10 +43,11 @@ router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { data: authData, error: authError } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
     if (authError) {
       console.error("Auth error:", authError);
@@ -54,7 +60,7 @@ router.post("/login", async (req, res) => {
     const userData = {
       id: authData.user.id,
       email: authData.user.email,
-      role: authData.user.role || 'user' // Используем поле role из auth.users если есть
+      role: authData.user.role || "user", // Используем поле role из auth.users если есть
     };
 
     // Создаем JWT токен
@@ -63,12 +69,11 @@ router.post("/login", async (req, res) => {
     // Устанавливаем куки
     setSessionCookie(res, token);
 
-    res.json({ 
-      message: "Logged in", 
+    res.json({
+      message: "Logged in",
       role: userData.role,
-      user: userData
+      user: userData,
     });
-
   } catch (error) {
     console.error("Unexpected error in login:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -116,16 +121,28 @@ router.post("/reset", async (req, res) => {
 //        GOOGLE LOGIN
 // =========================
 router.get("/google", async (req, res) => {
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: process.env.BACKEND_URL + "/auth/callback",
-    },
-  });
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${process.env.BACKEND_URL}/auth/callback`,
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
+      },
+    });
 
-  if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      console.error("Google OAuth error:", error);
+      return res.status(400).json({ error: error.message });
+    }
 
-  res.redirect(data.url);
+    res.redirect(data.url);
+  } catch (error) {
+    console.error("Unexpected error in Google OAuth:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // =========================
@@ -133,41 +150,92 @@ router.get("/google", async (req, res) => {
 // =========================
 router.get("/callback", async (req, res) => {
   const token_hash = req.query.token_hash as string;
+  const code = req.query.code as string;
 
-  const { data } = await supabase.auth.exchangeCodeForSession(token_hash);
+  console.log("Google callback received:", { token_hash, code });
 
-  if (!data?.user) return res.status(400).json({ error: "No user" });
+  try {
+    // Обмен кода на сессию
+    const { data, error } = await supabase.auth.exchangeCodeForSession(
+      code || token_hash
+    );
 
-  // Ensure profile exists
-  let profile = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", data.user.id)
-    .single();
-
-  // Якщо профілю нема — створюємо
-  if (!profile.data) {
-    const { data: newProfile, error: insertError } = await supabase
-      .from("profiles")
-      .insert({
-        id: data.user.id,
-        email: data.user.email,
-        role: "user",
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      return res.status(500).json({ error: "Cannot create profile" });
+    if (error) {
+      console.error("Exchange code error:", error);
+      return res.status(400).json({ error: error.message });
     }
 
-    profile.data = newProfile;
+    console.log("Session data:", data);
+
+    if (!data?.session?.user) {
+      console.error("No user in session data");
+      return res.status(400).json({ error: "No user found in session" });
+    }
+
+    const user = data.session.user;
+    console.log("Google user:", user);
+
+    // Проверяем, существует ли профиль
+    let profile = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    // Если профиля нет — создаем
+    if (!profile.data) {
+      console.log("Creating new profile for user:", user.email);
+
+      const { data: newProfile, error: insertError } = await supabase
+        .from("profiles")
+        .insert({
+          id: user.id,
+          email: user.email,
+          name:
+            user.user_metadata?.full_name ||
+            user.user_metadata?.name ||
+            user.email?.split("@")[0],
+          avatar_url: user.user_metadata?.avatar_url,
+          role: "user",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error("Profile creation error:", insertError);
+        return res
+          .status(500)
+          .json({ error: "Cannot create profile: " + insertError.message });
+      }
+
+      profile.data = newProfile;
+    } else {
+      console.log("Profile already exists:", profile.data.email);
+    }
+
+    // Создаем JWT токен
+    const token = createSessionToken({
+      id: user.id,
+      email: user.email,
+      role: profile.data?.role || "user",
+      name: profile.data?.name || user.user_metadata?.name,
+    });
+
+    // Устанавливаем куки
+    setSessionCookie(res, token);
+
+    console.log("Success! Redirecting to:", process.env.CLIENT_URL);
+
+    // Редирект на клиент
+    res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
+  } catch (error) {
+    console.error("Callback error:", error);
+    res
+      .status(500)
+      .json({ error: "Internal server error during OAuth callback" });
   }
-
-  const token = createSessionToken(profile.data);
-  setSessionCookie(res, token);
-
-  res.redirect(process.env.CLIENT_URL + "/admin");
 });
 
 // =========================
